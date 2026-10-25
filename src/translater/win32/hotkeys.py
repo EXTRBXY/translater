@@ -26,7 +26,11 @@ _user32.UnregisterHotKey.restype = wintypes.BOOL
 _user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
 _user32.GetMessageW.restype = ctypes.c_int
 _user32.PeekMessageW.argtypes = [
-    ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT
+    ctypes.POINTER(wintypes.MSG),
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.UINT,
 ]
 _user32.PeekMessageW.restype = wintypes.BOOL
 _user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]

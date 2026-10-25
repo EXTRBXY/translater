@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import getpass
 import logging
+import os
+import shutil
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from logging.handlers import RotatingFileHandler
 from types import TracebackType
 
@@ -12,14 +15,24 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
-from translater.config import HOTKEY_LABELS, AppConfig, config_path, load_config, log_dir, save_config
+from translater.audio.capture import GameAudioSource
+from translater.audio.segmenter import SpeechSegmenter
+from translater.audio.vad import SileroVad
+from translater.components import CUDA, MT_EN_RU, WHISPER, Component, ComponentError, ComponentStore, DownloadCancelled
+from translater.config import HOTKEY_LABELS, AppConfig, config_path, data_dir, load_config, log_dir, save_config
 from translater.controller import Mode, ModeController, ModeState
+from translater.incoming import IncomingRunner, Subtitle
+from translater.inference import worker
+from translater.inference.process import InferenceProcess
 from translater.models import ModelManager, ModelSpec
 from translater.ui.hold_key import HoldKeyWatcher
 from translater.ui.main_window import MainWindow
+from translater.ui.overlay import SubtitleOverlay
+from translater.ui.theme import MODE_LABELS
 from translater.ui.tray import TrayIcon
 from translater.win32.hotkeys import GlobalHotkeys
 from translater.win32.process import SingleInstance, set_below_normal_priority
+from translater.win32.processes import find_pid, windowed_processes
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +41,11 @@ _ACTIVATION_PIPE = f"Translater.App.{getpass.getuser()}"
 _ACTIVATION_TIMEOUT_MS = 1000
 _HOTKEY_MODES = {"incoming_toggle": Mode.INCOMING, "outgoing_toggle": Mode.OUTGOING}
 _ERROR_HOTKEY_ALREADY_REGISTERED = 1409
+_DISK_RESERVE_FACTOR = 2.2  # archive plus extracted files
 
-MODEL_SPECS: dict[str, ModelSpec] = {}
-MODE_REQUIREMENTS: dict[Mode, tuple[str, ...]] = {}
+MODE_COMPONENTS: dict[Mode, tuple[Component, ...]] = {Mode.INCOMING: (CUDA, WHISPER, MT_EN_RU)}
+MODE_MODELS: dict[Mode, tuple[str, ...]] = {Mode.INCOMING: (worker.WHISPER, worker.MT_EN_RU)}
+_MODEL_COMPONENTS = {worker.WHISPER: WHISPER, worker.MT_EN_RU: MT_EN_RU}
 
 
 def main() -> int:
@@ -69,29 +84,66 @@ def _activate_running_instance() -> bool:
     return True
 
 
+def _list_games() -> list[tuple[str, str]]:
+    own = os.path.basename(sys.executable).lower()
+    return [(p.exe, p.title) for p in windowed_processes() if p.exe.lower() != own]
+
+
 class _Bridge(QObject):
     """Moves callbacks from worker threads to the UI thread (queued signal delivery)."""
 
     hotkey = Signal(str)
     mode_state = Signal(object, object)
     mode_error = Signal(object, str)
+    mode_failure = Signal(object, str)
+    subtitle = Signal(object)
+    source = Signal(object, str)
+    download_progress = Signal(str, object, object)
+    download_finished = Signal(object, str)
 
 
 class _Application:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._tray_hint_shown = False
+        self._download_cancel: threading.Event | None = None
+        self._overlay: SubtitleOverlay | None = None
         self._bridge = _Bridge()
+        self._store = ComponentStore(data_dir() / "components")
+        self._inference = InferenceProcess(
+            worker.run,
+            worker.WorkerSettings(
+                cuda_dir=str(self._store.path(CUDA)),
+                model_dirs={name: str(self._store.path(c)) for name, c in _MODEL_COMPONENTS.items()},
+                cpu_threads=max(1, min(4, (os.cpu_count() or 2) // 2)),
+                log_file=str(log_dir() / "worker.log"),
+            ),
+        )
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="inference")
-        self._models = ModelManager(MODEL_SPECS, self._executor, config.unload_delay_s)
+        specs = {
+            name: ModelSpec(
+                load=partial(self._inference.load, name), unload=lambda _m, n=name: self._inference.unload(n)
+            )
+            for name in _MODEL_COMPONENTS
+        }
+        self._models = ModelManager(specs, self._executor, config.unload_delay_s)
+        self._incoming = IncomingRunner(
+            source_factory=lambda: GameAudioSource(self._config.game_exe, self._game_pid()),
+            segmenter_factory=lambda: SpeechSegmenter(SileroVad()),
+            executor=self._executor,
+            process_phrase=lambda phrase: self._inference.call("incoming", phrase),
+            on_subtitle=self._bridge.subtitle.emit,
+            on_source=lambda text: self._bridge.source.emit(Mode.INCOMING, f"Источник: {text}"),
+            on_failure=lambda exc: self._bridge.mode_failure.emit(Mode.INCOMING, str(exc)),
+        )
         self._controller = ModeController(
             self._models,
-            MODE_REQUIREMENTS,
-            runners={},
+            MODE_MODELS,
+            runners={Mode.INCOMING: self._incoming},
             on_state=self._bridge.mode_state.emit,
             on_error=lambda mode, exc: self._bridge.mode_error.emit(mode, str(exc)),
         )
-        self._window = MainWindow(config)
+        self._window = MainWindow(config, _list_games)
         self._tray = TrayIcon()
         self._hold = HoldKeyWatcher()
         self._hotkeys = GlobalHotkeys(self._bridge.hotkey.emit)
@@ -101,14 +153,20 @@ class _Application:
             log.warning("Activation server not started: %s", self._activation.errorString())
         self._activation.newConnection.connect(self._on_activation)
 
-        self._bridge.hotkey.connect(lambda name: self._controller.toggle(_HOTKEY_MODES[name]))
+        self._bridge.hotkey.connect(lambda name: self._toggle(_HOTKEY_MODES[name]))
         self._bridge.mode_state.connect(self._on_mode_state)
         self._bridge.mode_error.connect(self._on_mode_error)
-        self._window.toggle_requested.connect(self._controller.toggle)
+        self._bridge.mode_failure.connect(self._on_mode_failure)
+        self._bridge.subtitle.connect(self._on_subtitle)
+        self._bridge.source.connect(self._window.set_source)
+        self._bridge.download_progress.connect(self._window.set_download_progress)
+        self._bridge.download_finished.connect(self._on_download_finished)
+        self._window.toggle_requested.connect(self._toggle)
         self._window.settings_saved.connect(self._save_settings)
         self._window.capturing_changed.connect(self._on_capturing)
         self._window.hidden_to_tray.connect(self._on_hidden_to_tray)
-        self._tray.toggle_requested.connect(self._controller.toggle)
+        self._window.download_cancel_requested.connect(self._cancel_download)
+        self._tray.toggle_requested.connect(self._toggle)
         self._tray.open_requested.connect(self._window.bring_to_front)
         self._tray.quit_requested.connect(self._quit)
         self._hold.pressed.connect(lambda: self._set_recording(True))
@@ -118,16 +176,93 @@ class _Application:
         self._window.show()
 
     def shutdown(self) -> None:
+        self._cancel_download()
         self._activation.close()
         self._hold.stop()
         self._hotkeys.close()
         self._controller.shutdown()
         self._models.close()
         self._executor.shutdown(wait=False, cancel_futures=True)
+        self._inference.stop()
 
     def _quit(self) -> None:
         self._window.prepare_quit()
         QApplication.quit()
+
+    def _game_pid(self) -> int | None:
+        return find_pid(self._config.game_exe) if self._config.game_exe else None
+
+    def _toggle(self, mode: Mode) -> None:
+        if self._controller.state(mode) is not ModeState.IDLE:
+            self._controller.deactivate(mode)
+            return
+        if self._download_cancel is not None:
+            self._window.bring_to_front()
+            return
+        missing = self._store.missing(MODE_COMPONENTS.get(mode, ()))
+        if not missing:
+            self._controller.activate(mode)
+            return
+        self._offer_download(mode, missing)
+
+    def _offer_download(self, mode: Mode, missing: tuple[Component, ...]) -> None:
+        size = sum(c.size for c in missing)
+        root = data_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(root).free
+        self._window.bring_to_front()
+        if free < size * _DISK_RESERVE_FACTOR:
+            QMessageBox.warning(
+                self._window,
+                "Translater",
+                f"Недостаточно места на диске {root.drive}: нужно {size * _DISK_RESERVE_FACTOR / 1e9:.1f} ГБ, "
+                f"свободно {free / 1e9:.1f} ГБ.",
+            )
+            return
+        names = "\n".join(f"• {c.title} — {c.size / 1e9:.2f} ГБ" for c in missing)
+        answer = QMessageBox.question(
+            self._window,
+            "Translater",
+            f"Для режима «{MODE_LABELS[mode]}» нужно один раз скачать компоненты ({size / 1e9:.1f} ГБ):\n\n{names}\n\n"
+            "Источники: официальные пакеты NVIDIA на PyPI и Hugging Face. Файлы проверяются по контрольным суммам. "
+            "Прерванная загрузка продолжится с места остановки.\n\nСкачать сейчас?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        cancel = threading.Event()
+        self._download_cancel = cancel
+        threading.Thread(target=self._download, args=(mode, missing, cancel), name="download", daemon=True).start()
+
+    def _download(self, mode: Mode, components: tuple[Component, ...], cancel: threading.Event) -> None:
+        try:
+            for component in components:
+                self._store.install(
+                    component,
+                    lambda done, total, c=component: self._bridge.download_progress.emit(c.title, done, total),
+                    cancel,
+                )
+        except DownloadCancelled:
+            self._bridge.download_finished.emit(mode, "cancelled")
+        except (ComponentError, OSError) as exc:
+            log.exception("Component download failed")
+            self._bridge.download_finished.emit(mode, str(exc))
+        else:
+            self._bridge.download_finished.emit(mode, "")
+
+    def _cancel_download(self) -> None:
+        if self._download_cancel is not None:
+            self._download_cancel.set()
+
+    def _on_download_finished(self, mode: Mode, error: str) -> None:
+        self._download_cancel = None
+        self._window.hide_download()
+        if error == "cancelled":
+            return
+        if error:
+            QMessageBox.warning(self._window, "Translater", f"Загрузка не завершена.\n\n{error}")
+            return
+        self._tray.show_message("Компоненты загружены. Режим включается.")
+        self._controller.activate(mode)
 
     def _apply_hotkeys(self) -> None:
         hotkeys = self._config.hotkeys
@@ -158,11 +293,15 @@ class _Application:
             log.exception("Cannot save config")
             self._window.show_settings_status("Не удалось сохранить настройки.", error=True)
             return
+        source_changed = new_config.game_exe != self._config.game_exe
         self._config = new_config
         self._models.unload_delay_s = new_config.unload_delay_s
         if self._controller.state(Mode.OUTGOING) is ModeState.ACTIVE:
             self._hold.start(new_config.hotkeys.outgoing_hold.vk)
-        self._window.show_settings_status("Сохранено.")
+        restart_hint = source_changed and self._controller.state(Mode.INCOMING) is not ModeState.IDLE
+        self._window.show_settings_status(
+            "Сохранено. Новый источник звука применится при следующем включении." if restart_hint else "Сохранено."
+        )
         self._apply_hotkeys()
 
     def _on_mode_state(self, mode: Mode, state: ModeState) -> None:
@@ -173,9 +312,24 @@ class _Application:
                 self._hold.start(self._config.hotkeys.outgoing_hold.vk)
             else:
                 self._hold.stop()
+        if mode is Mode.INCOMING:
+            if state is ModeState.ACTIVE and self._overlay is None:
+                self._overlay = SubtitleOverlay()
+            elif state is ModeState.IDLE and self._overlay is not None:
+                self._overlay.close()
+                self._overlay.deleteLater()
+                self._overlay = None
 
     def _on_mode_error(self, mode: Mode, message: str) -> None:
-        self._tray.show_message(f"Режим не включён: {message}", error=True)
+        self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» не включён: {message}", error=True)
+
+    def _on_mode_failure(self, mode: Mode, message: str) -> None:
+        self._controller.deactivate(mode)
+        self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» остановлен из-за ошибки: {message}", error=True)
+
+    def _on_subtitle(self, subtitle: Subtitle) -> None:
+        if self._overlay is not None:
+            self._overlay.add_line(subtitle.text, subtitle.original)
 
     def _set_recording(self, recording: bool) -> None:
         self._tray.set_recording(recording)

@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,7 @@ MOUSE_VKS = frozenset({0x01, 0x02, 0x04, 0x05, 0x06})
 MODIFIER_VKS = frozenset({0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5})
 
 UNLOAD_DELAY_RANGE_S = (0, 600)
+MAX_EXE_NAME = 260
 MAX_RECORD_RANGE_S = (1, 60)
 
 
@@ -63,12 +64,14 @@ class AppConfig:
     hotkeys: HotkeyConfig = HotkeyConfig()
     unload_delay_s: int = 30
     max_record_s: int = 20
+    game_exe: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
             "hotkeys": {f.name: getattr(self.hotkeys, f.name).to_json() for f in fields(HotkeyConfig)},
             "unload_delay_s": self.unload_delay_s,
             "max_record_s": self.max_record_s,
+            "game_exe": self.game_exe,
         }
 
 
@@ -106,6 +109,8 @@ def validate(config: AppConfig) -> list[str]:
         errors.append("Задержка выгрузки моделей вне допустимого диапазона.")
     if not _in_range(config.max_record_s, MAX_RECORD_RANGE_S):
         errors.append("Максимальная длина записи вне допустимого диапазона.")
+    if not _is_exe_name(config.game_exe):
+        errors.append("Имя процесса игры должно быть именем .exe-файла.")
     return errors
 
 
@@ -135,10 +140,11 @@ def load_config(path: Path) -> AppConfig:
         hotkeys=HotkeyConfig(**hotkey_values),
         unload_delay_s=_int_or(raw.get("unload_delay_s"), UNLOAD_DELAY_RANGE_S, defaults.unload_delay_s),
         max_record_s=_int_or(raw.get("max_record_s"), MAX_RECORD_RANGE_S, defaults.max_record_s),
+        game_exe=raw["game_exe"] if _is_exe_name(raw.get("game_exe")) else defaults.game_exe,
     )
     if validate(config):
         log.warning("Config hotkeys conflict, default hotkeys used")
-        config = AppConfig(defaults.hotkeys, config.unload_delay_s, config.max_record_s)
+        config = replace(config, hotkeys=defaults.hotkeys)
     return config
 
 
@@ -156,11 +162,15 @@ def config_path() -> Path:
     return Path(base) / APP_DIR_NAME.lower() / "config.json"
 
 
-def log_dir() -> Path:
+def data_dir() -> Path:
     if sys.platform == "win32":
-        return Path(os.environ["LOCALAPPDATA"]) / APP_DIR_NAME / "logs"
+        return Path(os.environ["LOCALAPPDATA"]) / APP_DIR_NAME
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(base) / APP_DIR_NAME.lower() / "logs"
+    return Path(base) / APP_DIR_NAME.lower()
+
+
+def log_dir() -> Path:
+    return data_dir() / "logs"
 
 
 def _is_int(value: Any) -> bool:
@@ -169,6 +179,17 @@ def _is_int(value: Any) -> bool:
 
 def _in_range(value: int, bounds: tuple[int, int]) -> bool:
     return _is_int(value) and bounds[0] <= value <= bounds[1]
+
+
+def _is_exe_name(value: Any) -> bool:
+    if value == "":
+        return True
+    return (
+        isinstance(value, str)
+        and len(value) <= MAX_EXE_NAME
+        and value.lower().endswith(".exe")
+        and not any(c in value for c in '\\/:*?"<>|')
+    )
 
 
 def _int_or(value: Any, bounds: tuple[int, int], default: int) -> int:

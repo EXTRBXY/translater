@@ -1,0 +1,59 @@
+"""Model wrappers. Imported only inside the worker process."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from translater.inference.filters import is_meaningful
+
+_MIN_LANGUAGE_PROBABILITY = 0.3
+
+
+@dataclass(frozen=True)
+class Recognition:
+    language: str
+    text: str
+
+
+class SpeechRecognizer:
+    def __init__(self, model_dir: Path, cpu_threads: int) -> None:
+        from faster_whisper import WhisperModel
+
+        self._model = WhisperModel(str(model_dir), device="cuda", compute_type="int8_float16", cpu_threads=cpu_threads)
+
+    def recognize(self, audio: np.ndarray, languages: tuple[str, ...]) -> Recognition | None:
+        _, _, all_probabilities = self._model.detect_language(audio)
+        probabilities = dict(all_probabilities)
+        language = max(languages, key=lambda code: probabilities.get(code, 0.0))
+        if probabilities.get(language, 0.0) < _MIN_LANGUAGE_PROBABILITY:
+            return None
+        segments, _ = self._model.transcribe(
+            audio,
+            language=language,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            without_timestamps=True,
+            vad_filter=False,
+        )
+        text = " ".join(s.text.strip() for s in segments if s.no_speech_prob < 0.6).strip()
+        return Recognition(language, text) if is_meaningful(text) else None
+
+
+class TextTranslator:
+    def __init__(self, model_dir: Path, cpu_threads: int) -> None:
+        import ctranslate2
+        import sentencepiece
+
+        self._translator = ctranslate2.Translator(
+            str(model_dir), device="cpu", compute_type="int8", inter_threads=1, intra_threads=cpu_threads
+        )
+        self._source = sentencepiece.SentencePieceProcessor(model_file=str(model_dir / "src.spm.model"))
+        self._target = sentencepiece.SentencePieceProcessor(model_file=str(model_dir / "tgt.spm.model"))
+
+    def translate(self, text: str) -> str:
+        tokens = self._source.encode(text, out_type=str)
+        result = self._translator.translate_batch([tokens], beam_size=4, max_decoding_length=256)
+        return self._target.decode(result[0].hypotheses[0])

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -18,6 +22,7 @@ from translater.controller import Mode, ModeState
 from translater.ui.settings import SettingsForm
 from translater.ui.theme import (
     COLOR_ACTIVE,
+    COLOR_IDLE,
     COLOR_RECORDING,
     MODE_DESCRIPTIONS,
     MODE_LABELS,
@@ -80,13 +85,39 @@ class _ModeCard(QFrame):
         self._extra.setVisible(bool(text))
 
 
+class _DownloadPanel(QGroupBox):
+    cancel_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("Загрузка компонентов", parent)
+        self._label = QLabel()
+        self._label.setWordWrap(True)
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 1000)
+        cancel = QPushButton("Отмена")
+        cancel.clicked.connect(self.cancel_requested)
+        row = QHBoxLayout()
+        row.addWidget(self._bar, 1)
+        row.addWidget(cancel)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._label)
+        layout.addLayout(row)
+        self.hide()
+
+    def set_progress(self, title: str, done: int, total: int) -> None:
+        self._label.setText(f"{title}: {done / 1e9:.2f} из {total / 1e9:.2f} ГБ")
+        self._bar.setValue(int(done * 1000 / total) if total else 0)
+        self.show()
+
+
 class MainWindow(QMainWindow):
     toggle_requested = Signal(object)
     settings_saved = Signal(object)
     capturing_changed = Signal(bool)
     hidden_to_tray = Signal()
+    download_cancel_requested = Signal()
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, list_games: Callable[[], list[tuple[str, str]]]) -> None:
         super().__init__()
         self.setWindowTitle("Translater")
         self.setWindowIcon(dot_icon(COLOR_ACTIVE))
@@ -97,7 +128,9 @@ class MainWindow(QMainWindow):
         for card in self._cards.values():
             card.toggle_requested.connect(self.toggle_requested)
 
-        self._settings = SettingsForm(config)
+        self._download = _DownloadPanel()
+        self._download.cancel_requested.connect(self.download_cancel_requested)
+        self._settings = SettingsForm(config, list_games)
         self._settings.saved.connect(self.settings_saved)
         self._settings.capturing_changed.connect(self.capturing_changed)
         settings_box = QGroupBox("Клавиши и параметры")
@@ -112,6 +145,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         for card in self._cards.values():
             layout.addWidget(card)
+        layout.addWidget(self._download)
         layout.addWidget(settings_box)
         layout.addStretch(1)
         layout.addWidget(footer)
@@ -130,8 +164,17 @@ class MainWindow(QMainWindow):
 
     def set_state(self, mode: Mode, state: ModeState) -> None:
         self._cards[mode].set_state(state)
-        if mode is Mode.OUTGOING and state is not ModeState.ACTIVE:
-            self.set_recording(False)
+        if state is not ModeState.ACTIVE:
+            self._cards[mode].set_extra("", COLOR_IDLE)
+
+    def set_source(self, mode: Mode, text: str) -> None:
+        self._cards[mode].set_extra(text, COLOR_IDLE)
+
+    def set_download_progress(self, title: str, done: int, total: int) -> None:
+        self._download.set_progress(title, done, total)
+
+    def hide_download(self) -> None:
+        self._download.hide()
 
     def set_recording(self, recording: bool) -> None:
         self._cards[Mode.OUTGOING].set_extra("● Идёт запись" if recording else "", COLOR_RECORDING)

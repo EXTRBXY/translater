@@ -42,10 +42,19 @@ jobs:
           "exists=$exists" >> $env:GITHUB_OUTPUT
 
       - name: Build exe
-        if: steps.version.outputs.exists == 'false'
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --onedir
-          --name Translater --icon assets/translater.ico src/translater/__main__.py
+          --name Translater --icon assets/translater.ico
+          --collect-data faster_whisper --collect-binaries ctranslate2
+          src/translater/__main__.py
+
+      - name: Self-test exe
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "selftest.json"
+          $process = Start-Process -FilePath dist/Translater/Translater.exe -ArgumentList "--self-test", $report -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report }
+          if ($process.ExitCode -ne 0) { throw "Self-test failed with exit code $($process.ExitCode)" }
 
       - name: Package
         if: steps.version.outputs.exists == 'false'

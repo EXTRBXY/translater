@@ -87,16 +87,17 @@ class ModeController:
             was_active = slot.state is ModeState.ACTIVE
             slot.generation += 1
             self._set_state(mode, ModeState.IDLE)
-            if not was_active:
-                return  # _on_loaded of the cancelled generation releases the models
-            runner = self._runners.get(mode)
-            try:
-                if runner is not None:
-                    runner.stop()
-            except Exception:
-                log.exception("Runner %s stop failed", mode)
-            finally:
-                self._models.release(self._requirements.get(mode, ()))
+        if not was_active:
+            return  # _on_loaded of the cancelled generation releases the models
+        # Outside the lock: a runner may wait for the model executor, whose callbacks take the lock.
+        runner = self._runners.get(mode)
+        try:
+            if runner is not None:
+                runner.stop()
+        except Exception:
+            log.exception("Runner %s stop failed", mode)
+        finally:
+            self._models.release(self._requirements.get(mode, ()))
 
     def shutdown(self) -> None:
         for mode in Mode:
