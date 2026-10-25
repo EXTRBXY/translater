@@ -65,6 +65,20 @@
 Настройки — `%APPDATA%\Translater\config.json`, журнал — `%LOCALAPPDATA%\Translater\logs\translater.log`
 (тексты фраз и звук не записываются).
 
+## Сборка у себя
+
+Быстрее, чем качать архив из Releases: обновляются только изменения кода. Нужны Git и Python 3.14.
+
+```powershell
+git clone https://github.com/EXTRBXY/translater
+cd translater
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+Скрипт создаёт `.venv`, ставит зависимости (первый раз ~0,5 ГБ с PyPI, дальше только изменения), прогоняет тесты,
+собирает `dist\Translater\Translater.exe` и проверяет его самопроверкой — так же, как GitHub Actions.
+Обновление: закрыть программу, `git pull`, снова запустить скрипт. `-SkipTests` пропускает тесты.
+
 ## Разработка (Python 3.14)
 
 ```powershell

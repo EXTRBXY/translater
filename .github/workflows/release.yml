@@ -24,11 +24,9 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install
-        run: python -m pip install -e ".[dev,build]"
-
-      - name: Test
-        run: python -m pytest -q
+      - name: Build and self-test
+        shell: pwsh
+        run: ./tools/build.ps1 -Python python
 
       - name: Version
         id: version
@@ -40,26 +38,6 @@ jobs:
           $global:LASTEXITCODE = 0
           "version=$version" >> $env:GITHUB_OUTPUT
           "exists=$exists" >> $env:GITHUB_OUTPUT
-
-      - name: Build exe
-        run: >
-          python -m PyInstaller --noconfirm --clean --windowed --onedir
-          --name Translater --icon assets/translater.ico
-          --collect-data faster_whisper --collect-binaries ctranslate2
-          src/translater/__main__.py
-
-      - name: Self-test exe
-        shell: pwsh
-        run: |
-          $report = Join-Path $env:RUNNER_TEMP "selftest.json"
-          $process = Start-Process -FilePath dist/Translater/Translater.exe -ArgumentList "--self-test", $report -PassThru
-          $finished = $process.WaitForExit(180000)
-          if (-not $finished) { $process.Kill($true) }
-          foreach ($file in @($report, "$report.worker.log", "$env:LOCALAPPDATA\Translater\logs\translater.log")) {
-            if (Test-Path $file) { Write-Host "== $file"; Get-Content $file }
-          }
-          if (-not $finished) { throw "Self-test timed out" }
-          if ($process.ExitCode -ne 0) { throw "Self-test failed with exit code $($process.ExitCode)" }
 
       - name: Package
         if: steps.version.outputs.exists == 'false'
