@@ -36,7 +36,7 @@ from translater.inference import worker
 from translater.inference.process import InferenceProcess
 from translater.models import ModelManager, ModelSpec
 from translater.outgoing import OutgoingRunner, Utterance
-from translater.tts import WindowsSpeech
+from translater.tts import PREVIEW_TEXT, WindowsSpeech, english_voices
 from translater.ui.hold_key import HoldKeyWatcher
 from translater.ui.main_window import MainWindow
 from translater.ui.overlay import SubtitleOverlay
@@ -108,6 +108,14 @@ def _list_games() -> list[tuple[str, str]]:
     return [(p.exe, p.title) for p in windowed_processes() if p.exe.lower() != own]
 
 
+def _list_voices() -> list[str]:
+    try:
+        return english_voices()
+    except Exception:
+        log.exception("Cannot list Windows voices")
+        return []
+
+
 class _Bridge(QObject):
     """Moves callbacks from worker threads to the UI thread (queued signal delivery)."""
 
@@ -119,6 +127,7 @@ class _Bridge(QObject):
     source = Signal(object, str)
     stats = Signal(object)
     utterance = Signal(object)
+    preview = Signal(object)
     download_progress = Signal(str, object, object)
     download_finished = Signal(object, str)
 
@@ -161,7 +170,7 @@ class _Application:
         )
         self._outgoing = OutgoingRunner(
             mic_factory=MicrophoneSource,
-            synthesizer_factory=WindowsSpeech,
+            synthesizer_factory=lambda: WindowsSpeech(self._config.tts_voice),
             voice_player_factory=lambda: DevicePlayer(_VIRTUAL_CABLE),
             cue_player_factory=DevicePlayer,
             executor=self._executor,
@@ -178,7 +187,8 @@ class _Application:
             on_state=self._bridge.mode_state.emit,
             on_error=lambda mode, exc: self._bridge.mode_error.emit(mode, str(exc)),
         )
-        self._window = MainWindow(config, _list_games)
+        self._window = MainWindow(config, _list_games, _list_voices)
+        self._preview_player: DevicePlayer | None = None
         self._tray = TrayIcon()
         self._hold = HoldKeyWatcher()
         self._ptt = HoldKeyWatcher()
@@ -197,6 +207,7 @@ class _Application:
         self._bridge.source.connect(self._on_source)
         self._bridge.stats.connect(self._on_stats)
         self._bridge.utterance.connect(self._on_utterance)
+        self._bridge.preview.connect(self._play_preview)
         self._bridge.download_progress.connect(self._window.set_download_progress)
         self._bridge.download_finished.connect(self._on_download_finished)
         self._window.toggle_requested.connect(self._toggle)
@@ -204,6 +215,7 @@ class _Application:
         self._window.capturing_changed.connect(self._on_capturing)
         self._window.hidden_to_tray.connect(self._on_hidden_to_tray)
         self._window.download_cancel_requested.connect(self._cancel_download)
+        self._window.voice_preview_requested.connect(self._preview_voice)
         self._tray.toggle_requested.connect(self._toggle)
         self._tray.open_requested.connect(self._window.bring_to_front)
         self._tray.quit_requested.connect(self._quit)
@@ -220,6 +232,8 @@ class _Application:
         self._activation.close()
         self._hold.stop()
         self._ptt.stop()
+        if self._preview_player is not None:
+            self._preview_player.close()
         self._hotkeys.close()
         self._controller.shutdown()
         self._models.close()
@@ -334,14 +348,16 @@ class _Application:
             log.exception("Cannot save config")
             self._window.show_settings_status("Не удалось сохранить настройки.", error=True)
             return
-        source_changed = new_config.game_exe != self._config.game_exe
+        source_changed = (new_config.game_exe, new_config.tts_voice) != (self._config.game_exe, self._config.tts_voice)
         self._config = new_config
         self._models.unload_delay_s = new_config.unload_delay_s
         if self._controller.state(Mode.OUTGOING) is ModeState.ACTIVE:
             self._start_outgoing_keys()
-        restart_hint = source_changed and self._controller.state(Mode.INCOMING) is not ModeState.IDLE
+        restart_hint = source_changed and any(self._controller.state(m) is not ModeState.IDLE for m in Mode)
         self._window.show_settings_status(
-            "Сохранено. Новый источник звука применится при следующем включении." if restart_hint else "Сохранено."
+            "Сохранено. Источник звука и голос применятся при следующем включении режима."
+            if restart_hint
+            else "Сохранено."
         )
         self._apply_hotkeys()
 
@@ -389,6 +405,28 @@ class _Application:
     def _on_subtitle(self, subtitle: Subtitle) -> None:
         if self._overlay is not None:
             self._overlay.add_line(subtitle.text, subtitle.original)
+
+    def _preview_voice(self, voice_name: str) -> None:
+        def synthesize() -> None:
+            try:
+                self._bridge.preview.emit(WindowsSpeech(voice_name).synthesize(PREVIEW_TEXT))
+            except Exception as exc:
+                log.exception("Voice preview failed")
+                self._bridge.preview.emit(exc)
+
+        threading.Thread(target=synthesize, name="voice-preview", daemon=True).start()
+
+    def _play_preview(self, result: tuple | Exception) -> None:
+        if isinstance(result, Exception):
+            self._window.show_settings_status(f"Не удалось воспроизвести голос: {result}", error=True)
+            return
+        try:
+            if self._preview_player is None:
+                self._preview_player = DevicePlayer()
+            self._preview_player.play(*result)
+        except (OSError, LookupError) as exc:
+            log.exception("Preview playback failed")
+            self._window.show_settings_status(f"Не удалось воспроизвести голос: {exc}", error=True)
 
     def _on_utterance(self, utterance: Utterance | None) -> None:
         if self._overlay is None:

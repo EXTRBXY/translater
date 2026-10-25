@@ -37,9 +37,14 @@ _HINT = (
 class SettingsForm(QWidget):
     saved = Signal(object)
     capturing_changed = Signal(bool)
+    voice_preview_requested = Signal(str)
 
     def __init__(
-        self, config: AppConfig, list_games: Callable[[], list[tuple[str, str]]], parent: QWidget | None = None
+        self,
+        config: AppConfig,
+        list_games: Callable[[], list[tuple[str, str]]],
+        list_voices: Callable[[], list[str]],
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._list_games = list_games
@@ -58,6 +63,16 @@ class SettingsForm(QWidget):
         game_row.addWidget(self._game, 1)
         game_row.addWidget(refresh)
         self._fill_games(config.game_exe)
+        self._voice = QComboBox()
+        self._voice.addItem("Автоматически (мужской, если есть)", "")
+        for name in list_voices():
+            self._voice.addItem(name, name)
+        self._voice.setCurrentIndex(max(self._voice.findData(config.tts_voice), 0))
+        preview = QPushButton("Прослушать")
+        preview.clicked.connect(lambda: self.voice_preview_requested.emit(self._voice.currentData() or ""))
+        voice_row = QHBoxLayout()
+        voice_row.addWidget(self._voice, 1)
+        voice_row.addWidget(preview)
         self._status = QLabel()
         self._status.setWordWrap(True)
         save = QPushButton("Сохранить")
@@ -73,6 +88,7 @@ class SettingsForm(QWidget):
         form.addRow(f"{HOTKEY_LABELS['outgoing_hold']} (удерживать):", self._hold)
         form.addRow(f"{HOTKEY_LABELS['game_ptt']}:", self._ptt)
         form.addRow("Звук для субтитров:", game_row)
+        form.addRow("Голос озвучки:", voice_row)
         form.addRow("Выгружать модели через:", self._unload_delay)
         form.addRow("Максимальная длина записи:", self._max_record)
 
@@ -100,6 +116,7 @@ class SettingsForm(QWidget):
             unload_delay_s=self._unload_delay.value(),
             max_record_s=self._max_record.value(),
             game_exe=self._game.currentData() or "",
+            tts_voice=self._voice.currentData() or "",
         )
         errors = validate(candidate)
         if errors:

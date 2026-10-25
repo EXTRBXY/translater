@@ -96,3 +96,10 @@ def test_new_game_ptt_does_not_reset_user_hotkeys(tmp_path) -> None:
     assert hotkeys.outgoing_hold == Hotkey(0x05)
     assert hotkeys.incoming_toggle == Hotkey(0x41, MOD_CONTROL)
     assert hotkeys.game_ptt == Hotkey(0x06)
+
+
+def test_tts_voice_roundtrip_and_validation(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(tts_voice="Microsoft David Desktop - English (United States)"))
+    assert load_config(path).tts_voice == "Microsoft David Desktop - English (United States)"
+    assert validate(AppConfig(tts_voice="x" * 300))

@@ -116,8 +116,14 @@ class MainWindow(QMainWindow):
     capturing_changed = Signal(bool)
     hidden_to_tray = Signal()
     download_cancel_requested = Signal()
+    voice_preview_requested = Signal(str)
 
-    def __init__(self, config: AppConfig, list_games: Callable[[], list[tuple[str, str]]]) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        list_games: Callable[[], list[tuple[str, str]]],
+        list_voices: Callable[[], list[str]],
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Translater")
         self.setWindowIcon(dot_icon(COLOR_ACTIVE))
@@ -131,7 +137,8 @@ class MainWindow(QMainWindow):
 
         self._download = _DownloadPanel()
         self._download.cancel_requested.connect(self.download_cancel_requested)
-        self._settings = SettingsForm(config, list_games)
+        self._settings = SettingsForm(config, list_games, list_voices)
+        self._settings.voice_preview_requested.connect(self.voice_preview_requested)
         self._settings.saved.connect(self.settings_saved)
         self._settings.capturing_changed.connect(self.capturing_changed)
         settings_box = QGroupBox("Клавиши и параметры")

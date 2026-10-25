@@ -25,6 +25,7 @@ MODIFIER_VKS = frozenset({0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 
 
 UNLOAD_DELAY_RANGE_S = (0, 600)
 MAX_EXE_NAME = 260
+MAX_VOICE_NAME = 200
 _GAME_PTT_CANDIDATES = (0x05, 0x06, 0x04, 0x76)
 MAX_RECORD_RANGE_S = (1, 60)
 
@@ -67,6 +68,7 @@ class AppConfig:
     unload_delay_s: int = 30
     max_record_s: int = 20
     game_exe: str = ""
+    tts_voice: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,7 @@ class AppConfig:
             "unload_delay_s": self.unload_delay_s,
             "max_record_s": self.max_record_s,
             "game_exe": self.game_exe,
+            "tts_voice": self.tts_voice,
         }
 
 
@@ -120,6 +123,8 @@ def validate(config: AppConfig) -> list[str]:
         errors.append("Максимальная длина записи вне допустимого диапазона.")
     if not _is_exe_name(config.game_exe):
         errors.append("Имя процесса игры должно быть именем .exe-файла.")
+    if not _is_voice_name(config.tts_voice):
+        errors.append("Недопустимое имя голоса озвучки.")
     return errors
 
 
@@ -150,6 +155,7 @@ def load_config(path: Path) -> AppConfig:
         unload_delay_s=_int_or(raw.get("unload_delay_s"), UNLOAD_DELAY_RANGE_S, defaults.unload_delay_s),
         max_record_s=_int_or(raw.get("max_record_s"), MAX_RECORD_RANGE_S, defaults.max_record_s),
         game_exe=raw["game_exe"] if _is_exe_name(raw.get("game_exe")) else defaults.game_exe,
+        tts_voice=raw["tts_voice"] if _is_voice_name(raw.get("tts_voice")) else defaults.tts_voice,
     )
     if validate(config):
         config = _resolve_conflicts(config, defaults)
@@ -208,6 +214,10 @@ def _is_exe_name(value: Any) -> bool:
         and value.lower().endswith(".exe")
         and not any(c in value for c in '\\/:*?"<>|')
     )
+
+
+def _is_voice_name(value: Any) -> bool:
+    return isinstance(value, str) and len(value) <= MAX_VOICE_NAME and value.isprintable()
 
 
 def _int_or(value: Any, bounds: tuple[int, int], default: int) -> int:
