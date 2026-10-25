@@ -2,15 +2,21 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
 
@@ -29,17 +35,20 @@ jobs:
         shell: pwsh
         run: |
           $version = python -c "import importlib.metadata as m; print(m.version('translater'))"
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Тег $env:GITHUB_REF_NAME не совпадает с версией v$version в pyproject.toml"
-          }
+          gh release view "v$version" *> $null
+          $exists = if ($LASTEXITCODE -eq 0) { 'true' } else { 'false' }
+          $global:LASTEXITCODE = 0
           "version=$version" >> $env:GITHUB_OUTPUT
+          "exists=$exists" >> $env:GITHUB_OUTPUT
 
       - name: Build exe
+        if: steps.version.outputs.exists == 'false'
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --onedir
           --name Translater --icon assets/translater.ico src/translater/__main__.py
 
       - name: Package
+        if: steps.version.outputs.exists == 'false'
         id: package
         shell: pwsh
         run: |
@@ -47,16 +56,10 @@ jobs:
           Compress-Archive -Path dist/Translater -DestinationPath $zip
           "zip=$zip" >> $env:GITHUB_OUTPUT
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.package.outputs.zip }}
-          path: ${{ steps.package.outputs.zip }}
-
       - name: Publish release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: steps.version.outputs.exists == 'false'
         run: >
-          gh release create "${{ github.ref_name }}" "${{ steps.package.outputs.zip }}"
+          gh release create "v${{ steps.version.outputs.version }}" "${{ steps.package.outputs.zip }}"
+          --target "${{ github.sha }}"
           --title "Translater ${{ steps.version.outputs.version }}"
           --notes "Распакуйте архив и запустите Translater.exe."

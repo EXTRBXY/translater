@@ -53,9 +53,9 @@ py -3.14 -m venv .venv
 .venv\Scripts\python -m translater
 ```
 
-Релиз: поднять `version` в `pyproject.toml`, закоммитить, отправить тег `vX.Y.Z` с той же версией. GitHub Actions
-(`.github/workflows/release.yml`) прогонит тесты, соберёт `Translater.exe` через PyInstaller и опубликует архив в
-Releases.
+Релиз: поднять `version` в `pyproject.toml` и отправить в `main`. GitHub Actions (`.github/workflows/release.yml`)
+на каждый push прогоняет тесты; если релиза `v<версия>` ещё нет, собирает `Translater.exe` через PyInstaller, создаёт
+тег и публикует архив в Releases.
 
 ## Настройка звука для исходящего перевода (этап 4)
 
