@@ -62,7 +62,7 @@ def _worker(log_file: Path) -> dict[str, Any]:
     from translater.inference.process import InferenceProcess
 
     with tempfile.TemporaryDirectory() as tmp:
-        settings = worker.WorkerSettings(tmp, {}, 1, str(log_file))
+        settings = worker.WorkerSettings(str(Path(tmp) / "no-cuda"), {}, 1, str(log_file))
         process = InferenceProcess(worker.run, settings)
         try:
             return process.call("probe", None)

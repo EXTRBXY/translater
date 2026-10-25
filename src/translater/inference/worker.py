@@ -45,7 +45,7 @@ def run(conn: Connection, settings: WorkerSettings) -> None:
         serve(conn, _Service(settings).handlers())
     except Exception:
         log.exception("Worker failed")
-        raise
+        raise SystemExit(1) from None  # the parent sees the closed pipe and reports the failure
 
 
 def serve(conn: Connection, handlers: Mapping[str, Callable[[Any], Any]]) -> None:

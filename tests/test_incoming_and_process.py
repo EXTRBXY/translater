@@ -125,6 +125,17 @@ def test_inference_process_reports_worker_crash() -> None:
     process.stop()
 
 
+def _failing_worker(conn: Connection, settings: str) -> None:
+    raise SystemExit(1)
+
+
+def test_inference_process_reports_worker_start_failure() -> None:
+    process = InferenceProcess(_failing_worker, "cfg")
+    with pytest.raises(WorkerError):
+        process.load("a")
+    process.stop()
+
+
 def test_inference_process_relays_handler_errors() -> None:
     process = InferenceProcess(_echo_worker, "cfg")
     with pytest.raises(WorkerError, match="KeyError"):
