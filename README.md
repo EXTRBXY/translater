@@ -19,10 +19,12 @@
 | 4 | Озвучка в VB-Cable | — |
 | 5 | Оптимизация и замеры | — |
 
-## Запуск (Windows, Python 3.12)
+## Запуск (Windows, Python 3.14)
+
+Python 3.14 — установщик «Windows installer (64-bit)» с https://www.python.org/downloads/windows/.
 
 ```powershell
-py -3.12 -m venv .venv
+py -3.14 -m venv .venv
 .venv\Scripts\pip install -e .[dev]
 .venv\Scripts\python -m translater.doctor   # отчёт об окружении
 .venv\Scripts\python -m translater          # запуск, значок появится в трее
@@ -46,7 +48,7 @@ py -3.12 -m venv .venv
 
 ## Принятые решения
 
-- Python 3.12 + PySide6: трей, окно настроек и оверлей на одном фреймворке.
+- Python 3.14 (поддерживается 3.12–3.14: для более новых нет сборок ctranslate2 и onnxruntime) + PySide6: трей, окно настроек и оверлей на одном фреймворке.
 - Сочетания вкл/выкл — Win32 `RegisterHotKey` с модификатором; игра эти сочетания не получает.
 - Клавиша записи — опрос `GetAsyncKeyState` раз в 15 мс только во включённом исходящем режиме. Без перехвата ввода:
   клавиша доходит до игры, задержки ввода нет. Поддерживаются клавиши и средняя/боковые кнопки мыши.
