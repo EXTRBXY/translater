@@ -4,7 +4,7 @@ import numpy as np
 
 from translater.audio.resample import MonoResampler
 from translater.audio.segmenter import WINDOW, SegmenterSettings, SpeechSegmenter
-from translater.inference.filters import is_meaningful
+from translater.inference.filters import collapse_repeats, decoding_limit, is_meaningful
 
 
 def _stream(pattern: list[tuple[float, int]]) -> tuple[np.ndarray, list[float]]:
@@ -58,3 +58,14 @@ def test_hallucination_filter() -> None:
     assert not is_meaningful("go go go go go go")
     assert is_meaningful("Enemy on the left, behind the truck")
     assert is_meaningful("Спасибо, прикрой меня")
+
+
+def test_collapse_repeats() -> None:
+    assert collapse_repeats("1 2 3 3 4 4 5 5 5 5 5 5 5 1 1 1 1 1") == "1 2 3 3 4 4 5 1"
+    assert collapse_repeats("go go go go go now") == "go now"
+    assert collapse_repeats("Enemy on the left, behind the truck") == "Enemy on the left, behind the truck"
+
+
+def test_decoding_limit_follows_source_length() -> None:
+    assert decoding_limit(5) == 20
+    assert decoding_limit(500) == 256

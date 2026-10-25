@@ -34,3 +34,12 @@ def normalize(text: str) -> str:
 def is_meaningful(text: str) -> bool:
     key = normalize(text)
     return bool(key) and key not in _HALLUCINATIONS and not _REPEAT.search(text)
+
+
+def collapse_repeats(text: str) -> str:
+    """Safety net for a translation model stuck in a loop: "5 5 5 5 5" -> "5"."""
+    return re.sub(r"\s{2,}", " ", _REPEAT.sub(r"\1", text)).strip()
+
+
+def decoding_limit(source_tokens: int) -> int:
+    return min(256, 2 * source_tokens + 10)

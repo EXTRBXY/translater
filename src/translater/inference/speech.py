@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from translater.inference.filters import is_meaningful
+from translater.inference.filters import collapse_repeats, decoding_limit, is_meaningful
 
 log = logging.getLogger(__name__)
 
@@ -73,5 +73,11 @@ class TextTranslator:
 
     def translate(self, text: str) -> str:
         tokens = self._source.encode(text, out_type=str)
-        result = self._translator.translate_batch([tokens], beam_size=4, max_decoding_length=256)
-        return self._target.decode(result[0].hypotheses[0])
+        result = self._translator.translate_batch(
+            [tokens],
+            beam_size=4,
+            max_decoding_length=decoding_limit(len(tokens)),
+            no_repeat_ngram_size=3,
+            repetition_penalty=1.1,
+        )
+        return collapse_repeats(self._target.decode(result[0].hypotheses[0]))
