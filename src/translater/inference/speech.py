@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from translater.inference.filters import is_meaningful
+
+log = logging.getLogger(__name__)
 
 _MIN_LANGUAGE_PROBABILITY = 0.3
 
@@ -28,7 +31,10 @@ class SpeechRecognizer:
         _, _, all_probabilities = self._model.detect_language(audio)
         probabilities = dict(all_probabilities)
         language = max(languages, key=lambda code: probabilities.get(code, 0.0))
-        if probabilities.get(language, 0.0) < _MIN_LANGUAGE_PROBABILITY:
+        probability = probabilities.get(language, 0.0)
+        if probability < _MIN_LANGUAGE_PROBABILITY:
+            top = max(probabilities, key=probabilities.get)
+            log.info("Skipped: language %s %.2f below threshold (most likely %s)", language, probability, top)
             return None
         segments, _ = self._model.transcribe(
             audio,
@@ -38,8 +44,13 @@ class SpeechRecognizer:
             without_timestamps=True,
             vad_filter=False,
         )
+        segments = list(segments)
         text = " ".join(s.text.strip() for s in segments if s.no_speech_prob < 0.6).strip()
-        return Recognition(language, text) if is_meaningful(text) else None
+        if not is_meaningful(text):
+            log.info("Skipped: %d segments, empty or known hallucination after filtering (%s)", len(segments), language)
+            return None
+        log.info("Recognized %s, %d chars", language, len(text))
+        return Recognition(language, text)
 
 
 class TextTranslator:

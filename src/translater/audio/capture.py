@@ -42,8 +42,10 @@ class GameAudioSource:
         device = DeviceLoopbackSource()
         device.start(on_audio)
         self._inner = device
-        if self._exe:
-            self.description = f"весь звук системы ({self._exe} не найдена)"
+        if self._exe and self._pid is None:
+            self.description = f"весь звук системы ({self._exe} не запущена)"
+        elif self._exe:
+            self.description = f"весь звук системы (звук {self._exe} захватить не удалось)"
 
     def stop(self) -> None:
         if self._inner is not None:
@@ -86,7 +88,7 @@ class DeviceLoopbackSource:
             frames_per_buffer=rate // 50,
             stream_callback=callback,
         )
-        log.info("Device loopback started: %s Hz, %s ch", rate, channels)
+        log.info("Device loopback started: %s, %s Hz, %s ch", device.get("name"), rate, channels)
 
     def stop(self) -> None:
         stream, audio = self._stream, self._audio

@@ -21,7 +21,7 @@ from translater.audio.vad import SileroVad
 from translater.components import CUDA, MT_EN_RU, WHISPER, Component, ComponentError, ComponentStore, DownloadCancelled
 from translater.config import HOTKEY_LABELS, AppConfig, config_path, data_dir, load_config, log_dir, save_config
 from translater.controller import Mode, ModeController, ModeState
-from translater.incoming import IncomingRunner, Subtitle
+from translater.incoming import IncomingRunner, IncomingStats, Subtitle
 from translater.inference import worker
 from translater.inference.process import InferenceProcess
 from translater.models import ModelManager, ModelSpec
@@ -98,6 +98,7 @@ class _Bridge(QObject):
     mode_failure = Signal(object, str)
     subtitle = Signal(object)
     source = Signal(object, str)
+    stats = Signal(object)
     download_progress = Signal(str, object, object)
     download_finished = Signal(object, str)
 
@@ -108,6 +109,7 @@ class _Application:
         self._tray_hint_shown = False
         self._download_cancel: threading.Event | None = None
         self._overlay: SubtitleOverlay | None = None
+        self._source_text = ""
         self._bridge = _Bridge()
         self._store = ComponentStore(data_dir() / "components")
         self._inference = InferenceProcess(
@@ -135,6 +137,7 @@ class _Application:
             on_subtitle=self._bridge.subtitle.emit,
             on_source=lambda text: self._bridge.source.emit(Mode.INCOMING, f"Источник: {text}"),
             on_failure=lambda exc: self._bridge.mode_failure.emit(Mode.INCOMING, str(exc)),
+            on_stats=lambda stats: self._bridge.stats.emit(IncomingStats(stats.phrases, stats.shown, stats.skipped)),
         )
         self._controller = ModeController(
             self._models,
@@ -158,7 +161,8 @@ class _Application:
         self._bridge.mode_error.connect(self._on_mode_error)
         self._bridge.mode_failure.connect(self._on_mode_failure)
         self._bridge.subtitle.connect(self._on_subtitle)
-        self._bridge.source.connect(self._window.set_source)
+        self._bridge.source.connect(self._on_source)
+        self._bridge.stats.connect(self._on_stats)
         self._bridge.download_progress.connect(self._window.set_download_progress)
         self._bridge.download_finished.connect(self._on_download_finished)
         self._window.toggle_requested.connect(self._toggle)
@@ -326,6 +330,18 @@ class _Application:
     def _on_mode_failure(self, mode: Mode, message: str) -> None:
         self._controller.deactivate(mode)
         self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» остановлен из-за ошибки: {message}", error=True)
+
+    def _on_source(self, mode: Mode, text: str) -> None:
+        self._source_text = text
+        self._window.set_source(mode, text)
+
+    def _on_stats(self, stats: IncomingStats) -> None:
+        if self._controller.state(Mode.INCOMING) is ModeState.ACTIVE:
+            self._window.set_source(
+                Mode.INCOMING,
+                f"{self._source_text}\nФраз услышано: {stats.phrases}, показано: {stats.shown}, "
+                f"отброшено: {stats.skipped}",
+            )
 
     def _on_subtitle(self, subtitle: Subtitle) -> None:
         if self._overlay is not None:

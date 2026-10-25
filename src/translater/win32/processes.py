@@ -54,9 +54,10 @@ def windowed_processes() -> list[WindowedProcess]:
 
 
 def find_pid(exe: str) -> int | None:
+    """Root of the process tree with this exe name: browsers and some games render audio in child processes."""
     target = exe.lower()
-    for process in psutil.process_iter(["name"]):
-        name = process.info.get("name")
-        if name and name.lower() == target:
-            return process.pid
-    return None
+    matches = {p.pid: p for p in psutil.process_iter(["name", "ppid"]) if (p.info.get("name") or "").lower() == target}
+    for pid, process in matches.items():
+        if process.info.get("ppid") not in matches:
+            return pid
+    return next(iter(matches), None)

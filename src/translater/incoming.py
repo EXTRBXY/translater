@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from translater.audio import AudioSource
+from translater.audio import SAMPLE_RATE, AudioSource
 from translater.audio.segmenter import SpeechSegmenter
 
 log = logging.getLogger(__name__)
@@ -26,6 +26,13 @@ class Subtitle:
     original: str | None
 
 
+@dataclass
+class IncomingStats:
+    phrases: int = 0
+    shown: int = 0
+    skipped: int = 0
+
+
 class IncomingRunner:
     """Game audio -> phrases (VAD) -> recognition and translation on the model executor -> subtitles."""
 
@@ -38,6 +45,7 @@ class IncomingRunner:
         on_subtitle: Callable[[Subtitle], None],
         on_source: Callable[[str], None],
         on_failure: Callable[[BaseException], None],
+        on_stats: Callable[[IncomingStats], None] = lambda _stats: None,
     ) -> None:
         self._source_factory = source_factory
         self._segmenter_factory = segmenter_factory
@@ -46,6 +54,8 @@ class IncomingRunner:
         self._on_subtitle = on_subtitle
         self._on_source = on_source
         self._on_failure = on_failure
+        self._on_stats = on_stats
+        self._stats = IncomingStats()
         self._queue: deque[tuple[float, np.ndarray]] = deque(maxlen=_MAX_QUEUE)
         self._condition = threading.Condition()
         self._running = False
@@ -54,6 +64,7 @@ class IncomingRunner:
         self._worker: threading.Thread | None = None
 
     def start(self) -> None:
+        self._stats = IncomingStats()
         self._segmenter = self._segmenter_factory()
         self._running = True
         self._worker = threading.Thread(target=self._process_loop, name="incoming", daemon=True)
@@ -97,15 +108,30 @@ class IncomingRunner:
                 if not self._running:
                     return
                 created, phrase = self._queue.popleft()
+            self._stats.phrases += 1
             if time.monotonic() - created > _MAX_AGE_S:
+                self._stats.skipped += 1
+                log.info("Phrase dropped: waited too long")
+                self._on_stats(self._stats)
                 continue
+            started = time.monotonic()
             try:
                 result = self._executor.submit(self._process_phrase, phrase).result()
             except Exception as exc:
                 log.exception("Phrase processing failed")
                 self._on_failure(exc)
                 return
+            log.info(
+                "Phrase %.1f s processed in %d ms: %s",
+                len(phrase) / SAMPLE_RATE,
+                (time.monotonic() - started) * 1000,
+                "shown" if result is not None else "nothing recognized",
+            )
             if result is not None:
+                self._stats.shown += 1
                 self._on_subtitle(
                     Subtitle(result.translation or result.text, result.text if result.translation else None)
                 )
+            else:
+                self._stats.skipped += 1
+            self._on_stats(self._stats)
