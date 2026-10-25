@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "translater"
-version = "0.3.6"
+version = "0.3.7"
 description = "Локальный переводчик голосового чата для игр (Windows)"
 requires-python = ">=3.12,<3.15"
 dependencies = [

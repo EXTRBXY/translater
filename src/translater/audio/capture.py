@@ -168,15 +168,19 @@ class ProcessLoopbackSource:
         self._error = None
         self._thread = threading.Thread(target=self._run, args=(on_audio,), name="process-loopback", daemon=True)
         self._thread.start()
-        self._ready.wait()
+        if not self._ready.wait(_START_TIMEOUT_S):
+            self.stop()
+            raise CaptureError(f"Windows не ответила на запрос захвата звука за {_START_TIMEOUT_S:.0f} с.")
         if self._error is not None:
-            self._thread.join()
+            self.stop()
             raise CaptureError(f"Не удалось захватить звук процесса: {self._error}") from self._error
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join()
+            self._thread.join(_STOP_TIMEOUT_S)  # a thread stuck inside a COM call is daemon and abandoned
+            if self._thread.is_alive():
+                log.warning("Process loopback thread did not stop in time")
             self._thread = None
 
     def _run(self, on_audio: AudioCallback) -> None:
@@ -234,6 +238,8 @@ _VT_BLOB = 65
 _WAVE_FORMAT_PCM = 1
 _BUFFER_DURATION_100NS = 200_000
 _ACTIVATION_TIMEOUT_S = 5.0
+_START_TIMEOUT_S = 10.0
+_STOP_TIMEOUT_S = 2.0
 _VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK = "VAD\\Process_Loopback"
 
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -414,6 +420,7 @@ def _activate_process_loopback(pid: int):
         ctypes.POINTER(ctypes.POINTER(IActivateAudioInterfaceAsyncOperation)),
     ]
     activate.restype = comtypes.HRESULT
+    log.info("Process loopback: activating for pid %s", pid)
     activate(
         _VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
         ctypes.byref(IAudioClient._iid_),
@@ -424,6 +431,7 @@ def _activate_process_loopback(pid: int):
     if not done.wait(_ACTIVATION_TIMEOUT_S):
         raise CaptureError("Windows не ответила на запрос захвата звука процесса.")
     result, unknown = operation.GetActivateResult()
+    log.info("Process loopback: activation result 0x%08X", result & 0xFFFFFFFF)
     if result < 0:
         raise CaptureError(f"Windows отказала в захвате звука процесса (HRESULT 0x{result & 0xFFFFFFFF:08X}).")
     return unknown.QueryInterface(IAudioClient)
