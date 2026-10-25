@@ -64,7 +64,7 @@ class SettingsForm(QWidget):
         game_row.addWidget(refresh)
         self._fill_games(config.game_exe)
         self._voice = QComboBox()
-        self._voice.addItem("Автоматически (мужской, если есть)", "")
+        self._voice.addItem("Автоматически (мужской, если установлен)", "")
         for name in list_voices():
             self._voice.addItem(name, name)
         self._voice.setCurrentIndex(max(self._voice.findData(config.tts_voice), 0))

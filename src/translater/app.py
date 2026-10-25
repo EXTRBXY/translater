@@ -409,7 +409,8 @@ class _Application:
     def _preview_voice(self, voice_name: str) -> None:
         def synthesize() -> None:
             try:
-                self._bridge.preview.emit(WindowsSpeech(voice_name).synthesize(PREVIEW_TEXT))
+                speech = WindowsSpeech(voice_name)
+                self._bridge.preview.emit((speech.voice_name, *speech.synthesize(PREVIEW_TEXT)))
             except Exception as exc:
                 log.exception("Voice preview failed")
                 self._bridge.preview.emit(exc)
@@ -420,10 +421,12 @@ class _Application:
         if isinstance(result, Exception):
             self._window.show_settings_status(f"Не удалось воспроизвести голос: {result}", error=True)
             return
+        voice_name, samples, rate = result
         try:
             if self._preview_player is None:
                 self._preview_player = DevicePlayer()
-            self._preview_player.play(*result)
+            self._preview_player.play(samples, rate)
+            self._window.show_settings_status(f"Звучит голос: {voice_name}")
         except (OSError, LookupError) as exc:
             log.exception("Preview playback failed")
             self._window.show_settings_status(f"Не удалось воспроизвести голос: {exc}", error=True)
