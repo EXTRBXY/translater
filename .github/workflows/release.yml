@@ -52,8 +52,13 @@ jobs:
         shell: pwsh
         run: |
           $report = Join-Path $env:RUNNER_TEMP "selftest.json"
-          $process = Start-Process -FilePath dist/Translater/Translater.exe -ArgumentList "--self-test", $report -Wait -PassThru
-          if (Test-Path $report) { Get-Content $report }
+          $process = Start-Process -FilePath dist/Translater/Translater.exe -ArgumentList "--self-test", $report -PassThru
+          $finished = $process.WaitForExit(180000)
+          if (-not $finished) { $process.Kill($true) }
+          foreach ($file in @($report, "$report.worker.log", "$env:LOCALAPPDATA\Translater\logs\translater.log")) {
+            if (Test-Path $file) { Write-Host "== $file"; Get-Content $file }
+          }
+          if (-not $finished) { throw "Self-test timed out" }
           if ($process.ExitCode -ne 0) { throw "Self-test failed with exit code $($process.ExitCode)" }
 
       - name: Package
