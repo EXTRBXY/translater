@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
-    QMessageBox,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -20,50 +20,56 @@ from translater.config import (
     validate,
 )
 from translater.ui.key_capture import KeyCaptureEdit
+from translater.ui.theme import COLOR_ACTIVE, COLOR_RECORDING
 
 _HINT = (
-    "Нажмите на поле, затем нужное сочетание. Для переключателей нужен Ctrl, Alt, Shift или Win.\n"
-    "Клавишу записи удерживайте, пока говорите. Она не должна совпадать с клавишей рации в игре: "
-    "озвученный перевод передаётся в игру по рации уже после записи."
+    "Щёлкните по полю и нажмите нужное сочетание. Для включения режимов нужен Ctrl, Alt, Shift или Win. "
+    "Клавиша записи не должна совпадать с клавишей рации в игре."
 )
 
 
-class SettingsDialog(QDialog):
+class SettingsForm(QWidget):
+    saved = Signal(object)
+    capturing_changed = Signal(bool)
+
     def __init__(self, config: AppConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Translater — настройки")
-        self._result: AppConfig | None = None
-
         hotkeys = config.hotkeys
         self._incoming = KeyCaptureEdit(hotkeys.incoming_toggle, allow_modifiers=True, allow_mouse=False)
         self._outgoing = KeyCaptureEdit(hotkeys.outgoing_toggle, allow_modifiers=True, allow_mouse=False)
         self._hold = KeyCaptureEdit(hotkeys.outgoing_hold, allow_modifiers=False, allow_mouse=True)
         self._unload_delay = _spin_box(UNLOAD_DELAY_RANGE_S, config.unload_delay_s)
         self._max_record = _spin_box(MAX_RECORD_RANGE_S, config.max_record_s)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        save = QPushButton("Сохранить")
+        save.clicked.connect(self._save)
+
+        for edit in (self._incoming, self._outgoing, self._hold):
+            edit.capturing_changed.connect(self.capturing_changed)
+            edit.hotkey_changed.connect(lambda: self._status.clear())
 
         form = QFormLayout()
-        form.addRow(f"{HOTKEY_LABELS['incoming_toggle']} (вкл/выкл):", self._incoming)
-        form.addRow(f"{HOTKEY_LABELS['outgoing_toggle']} (вкл/выкл):", self._outgoing)
+        form.addRow(f"{HOTKEY_LABELS['incoming_toggle']}, вкл/выкл:", self._incoming)
+        form.addRow(f"{HOTKEY_LABELS['outgoing_toggle']}, вкл/выкл:", self._outgoing)
         form.addRow(f"{HOTKEY_LABELS['outgoing_hold']} (удерживать):", self._hold)
         form.addRow("Выгружать модели через:", self._unload_delay)
         form.addRow("Максимальная длина записи:", self._max_record)
 
         hint = QLabel(_HINT)
         hint.setWordWrap(True)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._try_accept)
-        buttons.rejected.connect(self.reject)
+        hint.setStyleSheet("color: palette(placeholder-text);")
+        footer = QHBoxLayout()
+        footer.addWidget(self._status, 1)
+        footer.addWidget(save)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(form)
         layout.addWidget(hint)
-        layout.addWidget(buttons)
-        self.setMinimumWidth(480)
+        layout.addLayout(footer)
 
-    def result_config(self) -> AppConfig | None:
-        return self._result
-
-    def _try_accept(self) -> None:
+    def _save(self) -> None:
         candidate = AppConfig(
             hotkeys=HotkeyConfig(
                 incoming_toggle=self._incoming.hotkey,
@@ -75,10 +81,13 @@ class SettingsDialog(QDialog):
         )
         errors = validate(candidate)
         if errors:
-            QMessageBox.warning(self, "Настройки", "\n".join(errors))
+            self.show_status("\n".join(errors), error=True)
             return
-        self._result = candidate
-        self.accept()
+        self.saved.emit(candidate)
+
+    def show_status(self, text: str, error: bool = False) -> None:
+        self._status.setStyleSheet(f"color: {COLOR_RECORDING if error else COLOR_ACTIVE};")
+        self._status.setText(text)
 
 
 def _spin_box(bounds: tuple[int, int], value: int) -> QSpinBox:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFocusEvent, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QLineEdit, QWidget
 
@@ -22,6 +22,9 @@ _QT_MODIFIERS = (
 
 class KeyCaptureEdit(QLineEdit):
     """Click, then press a key combination (or a mouse button if allowed). Esc cancels."""
+
+    capturing_changed = Signal(bool)
+    hotkey_changed = Signal()
 
     def __init__(
         self, hotkey: Hotkey, *, allow_modifiers: bool, allow_mouse: bool, parent: QWidget | None = None
@@ -76,11 +79,16 @@ class KeyCaptureEdit(QLineEdit):
         super().focusOutEvent(event)
 
     def _finish(self, hotkey: Hotkey) -> None:
+        changed = hotkey != self._hotkey
         self._hotkey = hotkey
         self._set_capturing(False)
+        if changed:
+            self.hotkey_changed.emit()
 
     def _set_capturing(self, capturing: bool) -> None:
-        self._capturing = capturing
+        if capturing != self._capturing:
+            self._capturing = capturing
+            self.capturing_changed.emit(capturing)
         self._render()
 
     def _render(self) -> None:

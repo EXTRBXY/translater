@@ -20,7 +20,8 @@ src/translater/models.py       ModelManager: ленивая загрузка, с
 src/translater/controller.py   ModeController: IDLE -> LOADING -> ACTIVE для режимов incoming/outgoing
 src/translater/app.py          composition root, связывание Qt и рабочих потоков
 src/translater/win32/          ctypes: RegisterHotKey, GetAsyncKeyState, приоритет, мьютекс
-src/translater/ui/             трей, окно настроек, захват клавиш, слежение за клавишей записи
+src/translater/ui/             главное окно, трей, форма настроек, захват клавиш, слежение за клавишей записи
+.github/workflows/release.yml  тег vX.Y.Z -> тесты, PyInstaller, архив в Releases
 ```
 
 ## Инварианты
@@ -37,3 +38,5 @@ python -m pytest
 python -m translater.doctor
 python -m translater
 ```
+
+Версия — только `version` в `pyproject.toml`; тег релиза обязан совпадать с ней.
