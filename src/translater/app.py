@@ -40,7 +40,8 @@ from translater.tts import PREVIEW_TEXT, WindowsSpeech, english_voices
 from translater.ui.hold_key import HoldKeyWatcher
 from translater.ui.main_window import MainWindow
 from translater.ui.overlay import SubtitleOverlay
-from translater.ui.theme import MODE_LABELS
+from translater.ui.theme import COLOR_RECORDING, MODE_LABELS, STATE_COLORS, STATE_LABELS
+from translater.ui.toast import StatusToast
 from translater.ui.tray import TrayIcon
 from translater.win32.hotkeys import GlobalHotkeys
 from translater.win32.process import SingleInstance, set_below_normal_priority
@@ -191,6 +192,7 @@ class _Application:
         self._window = MainWindow(config, _list_games, _list_voices)
         self._preview_player: DevicePlayer | None = None
         self._tray = TrayIcon()
+        self._toast = StatusToast()
         self._hold = HoldKeyWatcher()
         self._ptt = HoldKeyWatcher()
         self._hotkeys = GlobalHotkeys(self._bridge.hotkey.emit)
@@ -363,6 +365,7 @@ class _Application:
         self._apply_hotkeys()
 
     def _on_mode_state(self, mode: Mode, state: ModeState) -> None:
+        self._toast.show_message(f"{MODE_LABELS[mode]}: {STATE_LABELS[state].lower()}", STATE_COLORS[state])
         self._tray.set_state(mode, state)
         self._window.set_state(mode, state)
         if mode is Mode.OUTGOING:
@@ -384,10 +387,12 @@ class _Application:
         self._ptt.start(self._config.hotkeys.game_ptt.vk)
 
     def _on_mode_error(self, mode: Mode, message: str) -> None:
+        self._toast.show_message(f"{MODE_LABELS[mode]}: не включён", COLOR_RECORDING)
         self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» не включён: {message}", error=True)
 
     def _on_mode_failure(self, mode: Mode, message: str) -> None:
         self._controller.deactivate(mode)
+        self._toast.show_message(f"{MODE_LABELS[mode]}: остановлен из-за ошибки", COLOR_RECORDING)
         self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» остановлен из-за ошибки: {message}", error=True)
 
     def _on_source(self, mode: Mode, text: str) -> None:
