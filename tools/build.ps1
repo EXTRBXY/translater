@@ -22,7 +22,7 @@ if (-not $Python) {
     $Python = ".venv\Scripts\python.exe"
 }
 
-Invoke-Step "Зависимости" { & $Python -m pip install --disable-pip-version-check -q -e ".[dev,build]" }
+Invoke-Step "Зависимости" { & $Python -m pip install --disable-pip-version-check -e ".[dev,build]" }
 if (-not $SkipTests) {
     Invoke-Step "Тесты" { & $Python -m pytest -q }
 }
