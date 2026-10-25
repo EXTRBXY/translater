@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 _MAX_QUEUE = 3
 _MAX_AGE_S = 8.0
+_LEVEL_LOG_SAMPLES = 10 * SAMPLE_RATE
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,8 @@ class IncomingRunner:
 
     def start(self) -> None:
         self._stats = IncomingStats()
+        self._level_samples = 0
+        self._level_energy = 0.0
         self._segmenter = self._segmenter_factory()
         self._running = True
         self._worker = threading.Thread(target=self._process_loop, name="incoming", daemon=True)
@@ -95,10 +98,25 @@ class IncomingRunner:
         if segmenter is None or not len(samples):
             return
         phrases = segmenter.feed(samples)
+        self._log_level(segmenter, samples)
         if phrases:
             with self._condition:
                 self._queue.extend((time.monotonic(), phrase) for phrase in phrases)  # deque drops the oldest
                 self._condition.notify()
+
+    def _log_level(self, segmenter: SpeechSegmenter, samples: np.ndarray) -> None:
+        self._level_samples += len(samples)
+        self._level_energy += float(np.dot(samples, samples))
+        if self._level_samples < _LEVEL_LOG_SAMPLES:
+            return
+        rms = (self._level_energy / self._level_samples) ** 0.5
+        log.info(
+            "Audio %.0f s: rms %.4f, peak speech probability %.2f",
+            self._level_samples / SAMPLE_RATE,
+            rms,
+            segmenter.peak_probability,
+        )
+        self._level_samples, self._level_energy, segmenter.peak_probability = 0, 0.0, 0.0
 
     def _process_loop(self) -> None:
         while True:

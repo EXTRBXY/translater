@@ -40,6 +40,7 @@ class SpeechSegmenter:
         self._phrase: list[np.ndarray] = []
         self._voiced = 0
         self._silence = 0
+        self.peak_probability = 0.0
 
     def feed(self, samples: np.ndarray) -> list[np.ndarray]:
         self._pending = np.concatenate([self._pending, samples.astype(np.float32, copy=False)])
@@ -58,6 +59,7 @@ class SpeechSegmenter:
 
     def _step(self, window: np.ndarray) -> np.ndarray | None:
         probability = self._probability(window)
+        self.peak_probability = max(self.peak_probability, probability)
         s = self._settings
         if not self._phrase:
             if probability >= s.threshold:
