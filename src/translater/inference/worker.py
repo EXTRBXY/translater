@@ -38,6 +38,12 @@ class IncomingResult:
     translation: str | None
 
 
+@dataclass(frozen=True)
+class OutgoingResult:
+    text: str
+    translation: str
+
+
 def run(conn: Connection, settings: WorkerSettings) -> None:
     _setup_logging(settings.log_file)
     try:
@@ -69,7 +75,13 @@ class _Service:
         self._models: dict[str, Any] = {}
 
     def handlers(self) -> dict[str, Callable[[Any], Any]]:
-        return {"load": self._load, "unload": self._unload, "incoming": self._incoming, "probe": _probe}
+        return {
+            "load": self._load,
+            "unload": self._unload,
+            "incoming": self._incoming,
+            "outgoing": self._outgoing,
+            "probe": _probe,
+        }
 
     def _load(self, name: str) -> None:
         if name in self._models:
@@ -92,6 +104,12 @@ class _Service:
             return None
         translation = self._models[MT_EN_RU].translate(recognition.text) if recognition.language == "en" else None
         return IncomingResult(recognition.language, recognition.text, translation)
+
+    def _outgoing(self, audio: np.ndarray) -> OutgoingResult | None:
+        recognition = self._models[WHISPER].recognize(audio, ("ru",))
+        if recognition is None:
+            return None
+        return OutgoingResult(recognition.text, self._models[MT_RU_EN].translate(recognition.text))
 
 
 def _probe(_payload: Any) -> dict[str, Any]:

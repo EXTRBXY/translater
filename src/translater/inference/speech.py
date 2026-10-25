@@ -28,13 +28,9 @@ class SpeechRecognizer:
         self._model = WhisperModel(str(model_dir), device="cuda", compute_type="int8_float16", cpu_threads=cpu_threads)
 
     def recognize(self, audio: np.ndarray, languages: tuple[str, ...]) -> Recognition | None:
-        _, _, all_probabilities = self._model.detect_language(audio)
-        probabilities = dict(all_probabilities)
-        language = max(languages, key=lambda code: probabilities.get(code, 0.0))
-        probability = probabilities.get(language, 0.0)
-        if probability < _MIN_LANGUAGE_PROBABILITY:
-            top = max(probabilities, key=probabilities.get)
-            log.info("Skipped: language %s %.2f below threshold (most likely %s)", language, probability, top)
+        """With one language detection is skipped; with several the most probable of them is used."""
+        language = languages[0] if len(languages) == 1 else self._detect(audio, languages)
+        if language is None:
             return None
         segments, _ = self._model.transcribe(
             audio,
@@ -51,6 +47,17 @@ class SpeechRecognizer:
             return None
         log.info("Recognized %s, %d chars", language, len(text))
         return Recognition(language, text)
+
+    def _detect(self, audio: np.ndarray, languages: tuple[str, ...]) -> str | None:
+        _, _, all_probabilities = self._model.detect_language(audio)
+        probabilities = dict(all_probabilities)
+        language = max(languages, key=lambda code: probabilities.get(code, 0.0))
+        probability = probabilities.get(language, 0.0)
+        if probability < _MIN_LANGUAGE_PROBABILITY:
+            top = max(probabilities, key=probabilities.get)
+            log.info("Skipped: language %s %.2f below threshold (most likely %s)", language, probability, top)
+            return None
+        return language
 
 
 class TextTranslator:

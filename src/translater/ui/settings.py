@@ -27,7 +27,9 @@ from translater.ui.theme import COLOR_ACTIVE, COLOR_RECORDING
 
 _HINT = (
     "Щёлкните по полю и нажмите нужное сочетание. Для включения режимов нужен Ctrl, Alt, Shift или Win. "
-    "Клавиша записи не должна совпадать с клавишей рации в игре. Для субтитров выберите игру, пока она запущена: "
+    "Клавиша рации — та же, что в настройках игры: программа только видит её нажатие "
+    "и в этот момент озвучивает перевод. Клавиша записи должна от неё отличаться. "
+    "Для субтитров выберите игру, пока она запущена: "
     "тогда Discord и музыка в субтитры не попадут."
 )
 
@@ -45,6 +47,7 @@ class SettingsForm(QWidget):
         self._incoming = KeyCaptureEdit(hotkeys.incoming_toggle, allow_modifiers=True, allow_mouse=False)
         self._outgoing = KeyCaptureEdit(hotkeys.outgoing_toggle, allow_modifiers=True, allow_mouse=False)
         self._hold = KeyCaptureEdit(hotkeys.outgoing_hold, allow_modifiers=False, allow_mouse=True)
+        self._ptt = KeyCaptureEdit(hotkeys.game_ptt, allow_modifiers=False, allow_mouse=True)
         self._unload_delay = _spin_box(UNLOAD_DELAY_RANGE_S, config.unload_delay_s)
         self._max_record = _spin_box(MAX_RECORD_RANGE_S, config.max_record_s)
         self._game = QComboBox()
@@ -60,7 +63,7 @@ class SettingsForm(QWidget):
         save = QPushButton("Сохранить")
         save.clicked.connect(self._save)
 
-        for edit in (self._incoming, self._outgoing, self._hold):
+        for edit in (self._incoming, self._outgoing, self._hold, self._ptt):
             edit.capturing_changed.connect(self.capturing_changed)
             edit.hotkey_changed.connect(lambda: self._status.clear())
 
@@ -68,6 +71,7 @@ class SettingsForm(QWidget):
         form.addRow(f"{HOTKEY_LABELS['incoming_toggle']}, вкл/выкл:", self._incoming)
         form.addRow(f"{HOTKEY_LABELS['outgoing_toggle']}, вкл/выкл:", self._outgoing)
         form.addRow(f"{HOTKEY_LABELS['outgoing_hold']} (удерживать):", self._hold)
+        form.addRow(f"{HOTKEY_LABELS['game_ptt']}:", self._ptt)
         form.addRow("Звук для субтитров:", game_row)
         form.addRow("Выгружать модели через:", self._unload_delay)
         form.addRow("Максимальная длина записи:", self._max_record)
@@ -91,6 +95,7 @@ class SettingsForm(QWidget):
                 incoming_toggle=self._incoming.hotkey,
                 outgoing_toggle=self._outgoing.hotkey,
                 outgoing_hold=self._hold.hotkey,
+                game_ptt=self._ptt.hotkey,
             ),
             unload_delay_s=self._unload_delay.value(),
             max_record_s=self._max_record.value(),

@@ -25,6 +25,7 @@ MODIFIER_VKS = frozenset({0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 
 
 UNLOAD_DELAY_RANGE_S = (0, 600)
 MAX_EXE_NAME = 260
+_GAME_PTT_CANDIDATES = (0x05, 0x06, 0x04, 0x76)
 MAX_RECORD_RANGE_S = (1, 60)
 
 
@@ -57,6 +58,7 @@ class HotkeyConfig:
     incoming_toggle: Hotkey = Hotkey(0x78, MOD_CONTROL | MOD_ALT)
     outgoing_toggle: Hotkey = Hotkey(0x79, MOD_CONTROL | MOD_ALT)
     outgoing_hold: Hotkey = Hotkey(0x77)
+    game_ptt: Hotkey = Hotkey(0x05)
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,7 @@ HOTKEY_LABELS: dict[str, str] = {
     "incoming_toggle": "Входящий перевод",
     "outgoing_toggle": "Исходящий перевод",
     "outgoing_hold": "Клавиша записи",
+    "game_ptt": "Клавиша рации в игре",
 }
 
 
@@ -96,14 +99,20 @@ def validate(config: AppConfig) -> list[str]:
     if hotkeys.incoming_toggle == hotkeys.outgoing_toggle:
         errors.append("Сочетания входящего и исходящего перевода совпадают.")
 
-    hold = hotkeys.outgoing_hold
-    hold_label = HOTKEY_LABELS["outgoing_hold"]
-    if hold.vk in (VK_LBUTTON, VK_RBUTTON) or hold.vk in MODIFIER_VKS:
-        errors.append(f"{hold_label}: левая и правая кнопки мыши и модификаторы не допускаются.")
-    if hold.modifiers:
-        errors.append(f"{hold_label}: должна быть одной клавишей без модификаторов.")
-    if hold.vk in {t.vk for t in toggles.values()}:
-        errors.append(f"{hold_label}: совпадает с клавишей одного из сочетаний.")
+    held = {"outgoing_hold": hotkeys.outgoing_hold, "game_ptt": hotkeys.game_ptt}
+    for name, key in held.items():
+        label = HOTKEY_LABELS[name]
+        if key.vk in (VK_LBUTTON, VK_RBUTTON) or key.vk in MODIFIER_VKS:
+            errors.append(f"{label}: левая и правая кнопки мыши и модификаторы не допускаются.")
+        if key.modifiers:
+            errors.append(f"{label}: должна быть одной клавишей без модификаторов.")
+        if key.vk in {t.vk for t in toggles.values()}:
+            errors.append(f"{label}: совпадает с клавишей одного из сочетаний.")
+    if hotkeys.outgoing_hold.vk == hotkeys.game_ptt.vk:
+        errors.append(
+            "Клавиша записи совпадает с рацией в игре: игра передаст русскую речь во время записи. "
+            "Назначьте для записи другую клавишу."
+        )
 
     if not _in_range(config.unload_delay_s, UNLOAD_DELAY_RANGE_S):
         errors.append("Задержка выгрузки моделей вне допустимого диапазона.")
@@ -143,9 +152,18 @@ def load_config(path: Path) -> AppConfig:
         game_exe=raw["game_exe"] if _is_exe_name(raw.get("game_exe")) else defaults.game_exe,
     )
     if validate(config):
-        log.warning("Config hotkeys conflict, default hotkeys used")
-        config = replace(config, hotkeys=defaults.hotkeys)
+        config = _resolve_conflicts(config, defaults)
     return config
+
+
+def _resolve_conflicts(config: AppConfig, defaults: AppConfig) -> AppConfig:
+    """A newly added key must not wipe the user's hotkeys: try free buttons for it first."""
+    for vk in _GAME_PTT_CANDIDATES:
+        candidate = replace(config, hotkeys=replace(config.hotkeys, game_ptt=Hotkey(vk)))
+        if not validate(candidate):
+            return candidate
+    log.warning("Config hotkeys conflict, default hotkeys used")
+    return replace(config, hotkeys=defaults.hotkeys)
 
 
 def save_config(path: Path, config: AppConfig) -> None:

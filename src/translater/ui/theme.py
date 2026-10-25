@@ -15,7 +15,10 @@ STATE_LABELS = {ModeState.IDLE: "Выключен", ModeState.LOADING: "Загр
 MODE_LABELS = {Mode.INCOMING: "Входящий перевод", Mode.OUTGOING: "Исходящий перевод"}
 MODE_DESCRIPTIONS = {
     Mode.INCOMING: "Речь игроков → субтитры на русском поверх игры.",
-    Mode.OUTGOING: "Удерживайте клавишу записи и говорите по-русски → перевод на английский.",
+    Mode.OUTGOING: (
+        "Держите клавишу записи и говорите по-русски → английский текст и сигнал. "
+        "Затем зажмите рацию в игре — прозвучит английская озвучка."
+    ),
 }
 
 _icon_cache: dict[tuple[str, int], QIcon] = {}

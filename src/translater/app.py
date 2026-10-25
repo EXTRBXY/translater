@@ -15,16 +15,28 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
-from translater.audio.capture import GameAudioSource
+from translater.audio.capture import GameAudioSource, MicrophoneSource
+from translater.audio.playback import DevicePlayer
 from translater.audio.segmenter import SpeechSegmenter
 from translater.audio.vad import SileroVad
-from translater.components import CUDA, MT_EN_RU, WHISPER, Component, ComponentError, ComponentStore, DownloadCancelled
+from translater.components import (
+    CUDA,
+    MT_EN_RU,
+    MT_RU_EN,
+    WHISPER,
+    Component,
+    ComponentError,
+    ComponentStore,
+    DownloadCancelled,
+)
 from translater.config import HOTKEY_LABELS, AppConfig, config_path, data_dir, load_config, log_dir, save_config
 from translater.controller import Mode, ModeController, ModeState
 from translater.incoming import IncomingRunner, IncomingStats, Subtitle
 from translater.inference import worker
 from translater.inference.process import InferenceProcess
 from translater.models import ModelManager, ModelSpec
+from translater.outgoing import OutgoingRunner, Utterance
+from translater.tts import WindowsSpeech
 from translater.ui.hold_key import HoldKeyWatcher
 from translater.ui.main_window import MainWindow
 from translater.ui.overlay import SubtitleOverlay
@@ -42,10 +54,17 @@ _ACTIVATION_TIMEOUT_MS = 1000
 _HOTKEY_MODES = {"incoming_toggle": Mode.INCOMING, "outgoing_toggle": Mode.OUTGOING}
 _ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 _DISK_RESERVE_FACTOR = 2.2  # archive plus extracted files
+_VIRTUAL_CABLE = "CABLE Input"
 
-MODE_COMPONENTS: dict[Mode, tuple[Component, ...]] = {Mode.INCOMING: (CUDA, WHISPER, MT_EN_RU)}
-MODE_MODELS: dict[Mode, tuple[str, ...]] = {Mode.INCOMING: (worker.WHISPER, worker.MT_EN_RU)}
-_MODEL_COMPONENTS = {worker.WHISPER: WHISPER, worker.MT_EN_RU: MT_EN_RU}
+MODE_COMPONENTS: dict[Mode, tuple[Component, ...]] = {
+    Mode.INCOMING: (CUDA, WHISPER, MT_EN_RU),
+    Mode.OUTGOING: (CUDA, WHISPER, MT_RU_EN),
+}
+MODE_MODELS: dict[Mode, tuple[str, ...]] = {
+    Mode.INCOMING: (worker.WHISPER, worker.MT_EN_RU),
+    Mode.OUTGOING: (worker.WHISPER, worker.MT_RU_EN),
+}
+_MODEL_COMPONENTS = {worker.WHISPER: WHISPER, worker.MT_EN_RU: MT_EN_RU, worker.MT_RU_EN: MT_RU_EN}
 
 
 def main() -> int:
@@ -99,6 +118,7 @@ class _Bridge(QObject):
     subtitle = Signal(object)
     source = Signal(object, str)
     stats = Signal(object)
+    utterance = Signal(object)
     download_progress = Signal(str, object, object)
     download_finished = Signal(object, str)
 
@@ -139,16 +159,29 @@ class _Application:
             on_failure=lambda exc: self._bridge.mode_failure.emit(Mode.INCOMING, str(exc)),
             on_stats=lambda stats: self._bridge.stats.emit(IncomingStats(stats.phrases, stats.shown, stats.skipped)),
         )
+        self._outgoing = OutgoingRunner(
+            mic_factory=MicrophoneSource,
+            synthesizer_factory=WindowsSpeech,
+            voice_player_factory=lambda: DevicePlayer(_VIRTUAL_CABLE),
+            cue_player_factory=DevicePlayer,
+            executor=self._executor,
+            process_clip=lambda clip: self._inference.call("outgoing", clip),
+            max_record_s=lambda: self._config.max_record_s,
+            on_result=self._bridge.utterance.emit,
+            on_source=lambda text: self._bridge.source.emit(Mode.OUTGOING, text),
+            on_failure=lambda exc: self._bridge.mode_failure.emit(Mode.OUTGOING, str(exc)),
+        )
         self._controller = ModeController(
             self._models,
             MODE_MODELS,
-            runners={Mode.INCOMING: self._incoming},
+            runners={Mode.INCOMING: self._incoming, Mode.OUTGOING: self._outgoing},
             on_state=self._bridge.mode_state.emit,
             on_error=lambda mode, exc: self._bridge.mode_error.emit(mode, str(exc)),
         )
         self._window = MainWindow(config, _list_games)
         self._tray = TrayIcon()
         self._hold = HoldKeyWatcher()
+        self._ptt = HoldKeyWatcher()
         self._hotkeys = GlobalHotkeys(self._bridge.hotkey.emit)
         self._activation = QLocalServer()
         self._activation.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
@@ -163,6 +196,7 @@ class _Application:
         self._bridge.subtitle.connect(self._on_subtitle)
         self._bridge.source.connect(self._on_source)
         self._bridge.stats.connect(self._on_stats)
+        self._bridge.utterance.connect(self._on_utterance)
         self._bridge.download_progress.connect(self._window.set_download_progress)
         self._bridge.download_finished.connect(self._on_download_finished)
         self._window.toggle_requested.connect(self._toggle)
@@ -175,6 +209,8 @@ class _Application:
         self._tray.quit_requested.connect(self._quit)
         self._hold.pressed.connect(lambda: self._set_recording(True))
         self._hold.released.connect(lambda: self._set_recording(False))
+        self._ptt.pressed.connect(self._outgoing.ptt_pressed)
+        self._ptt.released.connect(self._outgoing.ptt_released)
 
         self._apply_hotkeys()
         self._window.show()
@@ -183,6 +219,7 @@ class _Application:
         self._cancel_download()
         self._activation.close()
         self._hold.stop()
+        self._ptt.stop()
         self._hotkeys.close()
         self._controller.shutdown()
         self._models.close()
@@ -301,7 +338,7 @@ class _Application:
         self._config = new_config
         self._models.unload_delay_s = new_config.unload_delay_s
         if self._controller.state(Mode.OUTGOING) is ModeState.ACTIVE:
-            self._hold.start(new_config.hotkeys.outgoing_hold.vk)
+            self._start_outgoing_keys()
         restart_hint = source_changed and self._controller.state(Mode.INCOMING) is not ModeState.IDLE
         self._window.show_settings_status(
             "Сохранено. Новый источник звука применится при следующем включении." if restart_hint else "Сохранено."
@@ -313,16 +350,21 @@ class _Application:
         self._window.set_state(mode, state)
         if mode is Mode.OUTGOING:
             if state is ModeState.ACTIVE:
-                self._hold.start(self._config.hotkeys.outgoing_hold.vk)
+                self._start_outgoing_keys()
             else:
                 self._hold.stop()
-        if mode is Mode.INCOMING:
-            if state is ModeState.ACTIVE and self._overlay is None:
-                self._overlay = SubtitleOverlay()
-            elif state is ModeState.IDLE and self._overlay is not None:
-                self._overlay.close()
-                self._overlay.deleteLater()
-                self._overlay = None
+                self._ptt.stop()
+        active = any(self._controller.state(m) is ModeState.ACTIVE for m in Mode)
+        if active and self._overlay is None:
+            self._overlay = SubtitleOverlay()
+        elif not active and self._overlay is not None:
+            self._overlay.close()
+            self._overlay.deleteLater()
+            self._overlay = None
+
+    def _start_outgoing_keys(self) -> None:
+        self._hold.start(self._config.hotkeys.outgoing_hold.vk)
+        self._ptt.start(self._config.hotkeys.game_ptt.vk)
 
     def _on_mode_error(self, mode: Mode, message: str) -> None:
         self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» не включён: {message}", error=True)
@@ -332,7 +374,8 @@ class _Application:
         self._tray.show_message(f"Режим «{MODE_LABELS[mode]}» остановлен из-за ошибки: {message}", error=True)
 
     def _on_source(self, mode: Mode, text: str) -> None:
-        self._source_text = text
+        if mode is Mode.INCOMING:
+            self._source_text = text
         self._window.set_source(mode, text)
 
     def _on_stats(self, stats: IncomingStats) -> None:
@@ -347,7 +390,20 @@ class _Application:
         if self._overlay is not None:
             self._overlay.add_line(subtitle.text, subtitle.original)
 
+    def _on_utterance(self, utterance: Utterance | None) -> None:
+        if self._overlay is None:
+            return
+        if utterance is None:
+            self._overlay.add_line("Речь не распознана, повторите")
+            return
+        QApplication.clipboard().setText(utterance.translation)
+        self._overlay.add_line(f"Вы: {utterance.translation}", utterance.text)
+
     def _set_recording(self, recording: bool) -> None:
+        if recording:
+            self._outgoing.begin_recording()
+        else:
+            self._outgoing.end_recording()
         self._tray.set_recording(recording)
         self._window.set_recording(recording)
 

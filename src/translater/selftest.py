@@ -47,14 +47,21 @@ def _audio() -> dict[str, int]:
     }
 
 
-def _windows() -> dict[str, int]:
+def _windows() -> dict[str, Any]:
     import comtypes  # noqa: F401
     import pyaudiowpatch  # noqa: F401
+    import win32com.client  # noqa: F401
 
-    from translater.audio import capture  # noqa: F401
+    from translater.audio import capture, playback  # noqa: F401
+    from translater.tts import WindowsSpeech
     from translater.win32 import processes
 
-    return {"windowed_processes": len(processes.windowed_processes())}
+    try:  # CI images may have no English voice: report, do not fail
+        samples, rate = WindowsSpeech().synthesize("Test")
+        speech: object = {"samples": len(samples), "rate": rate}
+    except Exception as exc:
+        speech = f"{type(exc).__name__}: {exc}"
+    return {"windowed_processes": len(processes.windowed_processes()), "speech": speech}
 
 
 def _worker(log_file: Path) -> dict[str, Any]:

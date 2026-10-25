@@ -100,6 +100,54 @@ class DeviceLoopbackSource:
             audio.terminate()
 
 
+class MicrophoneSource:
+    """Default WASAPI recording device (the real microphone)."""
+
+    def __init__(self) -> None:
+        self.description = "микрофон"
+        self._audio = None
+        self._stream = None
+
+    def start(self, on_audio: AudioCallback) -> None:
+        import pyaudiowpatch as pyaudio
+
+        self._audio = pyaudio.PyAudio()
+        try:
+            wasapi = self._audio.get_host_api_info_by_type(pyaudio.paWASAPI)
+            device = self._audio.get_device_info_by_index(int(wasapi["defaultInputDevice"]))
+        except (OSError, LookupError) as exc:
+            self.stop()
+            raise CaptureError("Не найден микрофон (устройство записи по умолчанию).") from exc
+        channels = int(device["maxInputChannels"])
+        rate = int(device["defaultSampleRate"])
+        resample = MonoResampler(rate, channels)
+
+        def callback(data, frame_count, time_info, status):
+            on_audio(resample(np.frombuffer(data, dtype=np.float32)))
+            return None, pyaudio.paContinue
+
+        self._stream = self._audio.open(
+            format=pyaudio.paFloat32,
+            channels=channels,
+            rate=rate,
+            input=True,
+            input_device_index=int(device["index"]),
+            frames_per_buffer=rate // 50,
+            stream_callback=callback,
+        )
+        self.description = f"микрофон {device.get('name')}"
+        log.info("Microphone started: %s, %s Hz, %s ch", device.get("name"), rate, channels)
+
+    def stop(self) -> None:
+        stream, audio = self._stream, self._audio
+        self._stream = self._audio = None
+        if stream is not None:
+            stream.stop_stream()
+            stream.close()
+        if audio is not None:
+            audio.terminate()
+
+
 class ProcessLoopbackSource:
     """Only the audio rendered by one process tree (the game)."""
 

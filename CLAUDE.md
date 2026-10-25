@@ -23,6 +23,9 @@ src/translater/components.py   закреплённые компоненты (NV
 src/translater/inference/      process.py — RPC к процессу моделей; worker.py — сам процесс; speech.py — Whisper и перевод
 src/translater/audio/          capture.py (WASAPI, только Windows), vad.py, segmenter.py, resample.py
 src/translater/incoming.py     IncomingRunner: звук -> фразы -> процесс моделей -> субтитры
+src/translater/outgoing.py     OutgoingRunner: запись по клавише -> ru->en -> голос Windows -> CABLE Input по рации
+src/translater/tts.py          SAPI (pywin32): английский голос Windows в PCM; только на потоке, где создан
+src/translater/audio/playback.py  DevicePlayer: вывод на устройство WASAPI в его формате, прерываемый
 src/translater/selftest.py     Translater.exe --self-test <отчёт>: проверка упаковки в CI
 src/translater/win32/          ctypes: RegisterHotKey, GetAsyncKeyState, приоритет, мьютекс
 src/translater/ui/             главное окно, трей, форма настроек, захват клавиш, слежение за клавишей записи

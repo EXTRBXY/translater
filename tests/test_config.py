@@ -23,7 +23,7 @@ def test_defaults_are_valid() -> None:
 def test_roundtrip(tmp_path) -> None:
     path = tmp_path / "config.json"
     config = AppConfig(
-        hotkeys=HotkeyConfig(Hotkey(0x41, MOD_CONTROL), Hotkey(0x42, MOD_ALT), Hotkey(0x05)),
+        hotkeys=HotkeyConfig(Hotkey(0x41, MOD_CONTROL), Hotkey(0x42, MOD_ALT), Hotkey(0x05), Hotkey(0x06)),
         unload_delay_s=0,
         max_record_s=60,
     )
@@ -77,3 +77,22 @@ def test_hold_key_rules() -> None:
     assert validate(_config(outgoing_hold=Hotkey(0x41, MOD_CONTROL))) != []
     assert validate(_config(outgoing_hold=Hotkey(HotkeyConfig().incoming_toggle.vk))) != []
     assert validate(_config(outgoing_hold=Hotkey(0x06))) == []
+
+
+def test_hold_key_must_differ_from_game_ptt() -> None:
+    assert validate(_config(outgoing_hold=Hotkey(0x06), game_ptt=Hotkey(0x06)))
+
+
+def test_new_game_ptt_does_not_reset_user_hotkeys(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    data = AppConfig().to_json()
+    del data["hotkeys"]["game_ptt"]
+    data["hotkeys"]["outgoing_hold"] = {"vk": 0x05, "modifiers": []}
+    data["hotkeys"]["incoming_toggle"] = {"vk": 0x41, "modifiers": ["ctrl"]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    hotkeys = load_config(path).hotkeys
+
+    assert hotkeys.outgoing_hold == Hotkey(0x05)
+    assert hotkeys.incoming_toggle == Hotkey(0x41, MOD_CONTROL)
+    assert hotkeys.game_ptt == Hotkey(0x06)

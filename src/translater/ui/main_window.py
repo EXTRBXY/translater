@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         self._config = config
 
         self._cards = {mode: _ModeCard(mode) for mode in Mode}
+        self._sources = dict.fromkeys(Mode, "")
         for card in self._cards.values():
             card.toggle_requested.connect(self.toggle_requested)
 
@@ -159,15 +160,16 @@ class MainWindow(QMainWindow):
         self._cards[Mode.INCOMING].set_hotkey_text(f"Вкл/выкл: {format_hotkey(hotkeys.incoming_toggle)}")
         self._cards[Mode.OUTGOING].set_hotkey_text(
             f"Вкл/выкл: {format_hotkey(hotkeys.outgoing_toggle)}    "
-            f"Запись: удерживать {format_hotkey(hotkeys.outgoing_hold)}"
+            f"Запись: {format_hotkey(hotkeys.outgoing_hold)}    Рация: {format_hotkey(hotkeys.game_ptt)}"
         )
 
     def set_state(self, mode: Mode, state: ModeState) -> None:
         self._cards[mode].set_state(state)
         if state is not ModeState.ACTIVE:
-            self._cards[mode].set_extra("", COLOR_IDLE)
+            self.set_source(mode, "")
 
     def set_source(self, mode: Mode, text: str) -> None:
+        self._sources[mode] = text
         self._cards[mode].set_extra(text, COLOR_IDLE)
 
     def set_download_progress(self, title: str, done: int, total: int) -> None:
@@ -177,7 +179,10 @@ class MainWindow(QMainWindow):
         self._download.hide()
 
     def set_recording(self, recording: bool) -> None:
-        self._cards[Mode.OUTGOING].set_extra("● Идёт запись" if recording else "", COLOR_RECORDING)
+        if recording:
+            self._cards[Mode.OUTGOING].set_extra("● Идёт запись", COLOR_RECORDING)
+        else:
+            self._cards[Mode.OUTGOING].set_extra(self._sources[Mode.OUTGOING], COLOR_IDLE)
 
     def show_settings_status(self, text: str, error: bool = False) -> None:
         self._settings.show_status(text, error)
