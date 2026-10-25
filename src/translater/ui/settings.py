@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from translater.config import (
     HOTKEY_LABELS,
     MAX_RECORD_RANGE_S,
+    MONITOR_VOLUME_RANGE,
     UNLOAD_DELAY_RANGE_S,
     AppConfig,
     HotkeyConfig,
@@ -73,6 +74,8 @@ class SettingsForm(QWidget):
         voice_row = QHBoxLayout()
         voice_row.addWidget(self._voice, 1)
         voice_row.addWidget(preview)
+        self._monitor = _spin_box(MONITOR_VOLUME_RANGE, config.monitor_volume, " %")
+        self._monitor.setSpecialValueText("выключено")
         self._status = QLabel()
         self._status.setWordWrap(True)
         save = QPushButton("Сохранить")
@@ -89,6 +92,7 @@ class SettingsForm(QWidget):
         form.addRow(f"{HOTKEY_LABELS['game_ptt']}:", self._ptt)
         form.addRow("Звук для субтитров:", game_row)
         form.addRow("Голос озвучки:", voice_row)
+        form.addRow("Озвучка в наушниках:", self._monitor)
         form.addRow("Выгружать модели через:", self._unload_delay)
         form.addRow("Максимальная длина записи:", self._max_record)
 
@@ -117,6 +121,7 @@ class SettingsForm(QWidget):
             max_record_s=self._max_record.value(),
             game_exe=self._game.currentData() or "",
             tts_voice=self._voice.currentData() or "",
+            monitor_volume=self._monitor.value(),
         )
         errors = validate(candidate)
         if errors:
@@ -140,9 +145,9 @@ class SettingsForm(QWidget):
         self._status.setText(text)
 
 
-def _spin_box(bounds: tuple[int, int], value: int) -> QSpinBox:
+def _spin_box(bounds: tuple[int, int], value: int, suffix: str = " с") -> QSpinBox:
     box = QSpinBox()
     box.setRange(*bounds)
     box.setValue(value)
-    box.setSuffix(" с")
+    box.setSuffix(suffix)
     return box

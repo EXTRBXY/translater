@@ -28,6 +28,7 @@ MAX_EXE_NAME = 260
 MAX_VOICE_NAME = 200
 _GAME_PTT_CANDIDATES = (0x05, 0x06, 0x04, 0x76)
 MAX_RECORD_RANGE_S = (1, 60)
+MONITOR_VOLUME_RANGE = (0, 100)
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class AppConfig:
     max_record_s: int = 20
     game_exe: str = ""
     tts_voice: str = ""
+    monitor_volume: int = 40
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -77,6 +79,7 @@ class AppConfig:
             "max_record_s": self.max_record_s,
             "game_exe": self.game_exe,
             "tts_voice": self.tts_voice,
+            "monitor_volume": self.monitor_volume,
         }
 
 
@@ -123,6 +126,8 @@ def validate(config: AppConfig) -> list[str]:
         errors.append("Максимальная длина записи вне допустимого диапазона.")
     if not _is_exe_name(config.game_exe):
         errors.append("Имя процесса игры должно быть именем .exe-файла.")
+    if not _in_range(config.monitor_volume, MONITOR_VOLUME_RANGE):
+        errors.append("Громкость озвучки в наушниках вне допустимого диапазона.")
     if not _is_voice_name(config.tts_voice):
         errors.append("Недопустимое имя голоса озвучки.")
     return errors
@@ -156,6 +161,7 @@ def load_config(path: Path) -> AppConfig:
         max_record_s=_int_or(raw.get("max_record_s"), MAX_RECORD_RANGE_S, defaults.max_record_s),
         game_exe=raw["game_exe"] if _is_exe_name(raw.get("game_exe")) else defaults.game_exe,
         tts_voice=raw["tts_voice"] if _is_voice_name(raw.get("tts_voice")) else defaults.tts_voice,
+        monitor_volume=_int_or(raw.get("monitor_volume"), MONITOR_VOLUME_RANGE, defaults.monitor_volume),
     )
     if validate(config):
         config = _resolve_conflicts(config, defaults)

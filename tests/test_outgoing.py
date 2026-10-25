@@ -71,6 +71,7 @@ class Harness:
         self.sources: list[str] = []
         self.done = threading.Event()
         self.clips: list[int] = []
+        self.monitor_volume = 40
 
         def voice_factory():
             if not voice_available:
@@ -92,6 +93,7 @@ class Harness:
             executor=ThreadPoolExecutor(max_workers=1),
             process_clip=process,
             max_record_s=lambda: 2,
+            monitor_volume=lambda: self.monitor_volume,
             on_result=on_result,
             on_source=self.sources.append,
             on_failure=lambda exc: None,
@@ -123,8 +125,9 @@ def test_records_translates_cues_and_plays_on_ptt() -> None:
 
     h.runner.ptt_pressed()
     assert h.voice.played == [500]
+    assert h.cue.played[-1] == 500  # monitor copy in the headphones
     h.runner.ptt_released()
-    assert h.voice.stopped == 1
+    assert h.voice.stopped == 1 and h.cue.stopped == 1
 
     h.runner.ptt_pressed()  # replayed until it finishes once
     h.voice.complete()
@@ -153,7 +156,7 @@ def test_ready_clip_plays_immediately_when_ptt_already_held() -> None:
     h.record(1)
     h.wait_until(lambda: h.voice.played)
     h.runner.stop()
-    assert h.cue.played == []
+    assert h.cue.played == [500]  # the monitor copy only, no "ready" beep
 
 
 def test_works_without_virtual_cable() -> None:
@@ -175,3 +178,16 @@ def test_unrecognized_speech_reports_none() -> None:
     h.runner.stop()
     assert h.results == [None]
     assert h.cue.played == []
+
+
+def test_monitor_can_be_disabled() -> None:
+    h = Harness()
+    h.monitor_volume = 0
+    h.runner.start()
+    h.record(1)
+    h.wait_until(lambda: h.cue.played)
+    beeps = len(h.cue.played)
+    h.runner.ptt_pressed()
+    h.runner.stop()
+    assert h.voice.played == [500]
+    assert len(h.cue.played) == beeps

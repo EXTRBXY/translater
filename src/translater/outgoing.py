@@ -55,6 +55,7 @@ class OutgoingRunner:
         executor: Executor,
         process_clip: Callable[[np.ndarray], Any],
         max_record_s: Callable[[], int],
+        monitor_volume: Callable[[], int],
         on_result: Callable[[Utterance | None], None],
         on_source: Callable[[str], None],
         on_failure: Callable[[BaseException], None],
@@ -66,6 +67,7 @@ class OutgoingRunner:
         self._executor = executor
         self._process_clip = process_clip
         self._max_record_s = max_record_s
+        self._monitor_volume = monitor_volume
         self._on_result = on_result
         self._on_source = on_source
         self._on_failure = on_failure
@@ -150,16 +152,28 @@ class OutgoingRunner:
     def ptt_pressed(self) -> None:
         with self._lock:
             self._ptt_down = True
-            pending, voice = self._pending, self._voice
-        if pending is not None and voice is not None:
-            voice.play(*pending, on_complete=lambda clip=pending: self._played(clip))
+            pending = self._pending
+        if pending is not None:
+            self._play(pending)
 
     def ptt_released(self) -> None:
         with self._lock:
             self._ptt_down = False
-            voice = self._voice
-        if voice is not None:
-            voice.stop()
+            players = (self._voice, self._cue)
+        for player in players:
+            if player is not None:
+                player.stop()
+
+    def _play(self, clip: tuple[np.ndarray, int]) -> None:
+        """Into the cable for the game and, quieter, into the headphones so the speaker hears when it ends."""
+        voice, cue = self._voice, self._cue
+        if voice is None:
+            return
+        voice.play(*clip, on_complete=lambda: self._played(clip))
+        volume = self._monitor_volume()
+        if cue is not None and volume > 0:
+            samples, rate = clip
+            cue.play(samples * (volume / 100), rate)
 
     def _played(self, clip: tuple[np.ndarray, int]) -> None:
         with self._lock:
@@ -224,7 +238,7 @@ class OutgoingRunner:
             self._pending = audio
             play_now = self._ptt_down
         if play_now:
-            voice.play(*audio, on_complete=lambda: self._played(audio))
+            self._play(audio)
         elif cue is not None:
             cue.play(beep(), 48000)
 

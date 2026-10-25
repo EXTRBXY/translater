@@ -176,6 +176,7 @@ class _Application:
             executor=self._executor,
             process_clip=lambda clip: self._inference.call("outgoing", clip),
             max_record_s=lambda: self._config.max_record_s,
+            monitor_volume=lambda: self._config.monitor_volume,
             on_result=self._bridge.utterance.emit,
             on_source=lambda text: self._bridge.source.emit(Mode.OUTGOING, text),
             on_failure=lambda exc: self._bridge.mode_failure.emit(Mode.OUTGOING, str(exc)),
