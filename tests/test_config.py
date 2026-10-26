@@ -103,3 +103,8 @@ def test_tts_voice_roundtrip_and_validation(tmp_path) -> None:
     save_config(path, AppConfig(tts_voice="Microsoft David Desktop - English (United States)"))
     assert load_config(path).tts_voice == "Microsoft David Desktop - English (United States)"
     assert validate(AppConfig(tts_voice="x" * 300))
+
+
+def test_speech_threshold_validation() -> None:
+    assert validate(AppConfig(speech_threshold=35)) == []
+    assert validate(AppConfig(speech_threshold=5))

@@ -21,6 +21,7 @@ from translater.win32.keys import format_hotkey
 class TrayIcon(QObject):
     toggle_requested = Signal(object)
     open_requested = Signal()
+    save_audio_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -37,6 +38,8 @@ class TrayIcon(QObject):
             action.setCheckable(True)
             action.triggered.connect(lambda _checked, m=mode: self._on_toggle(m))
             self._actions[mode] = action
+        self._menu.addSeparator()
+        self._menu.addAction("Сохранить последние 60 с звука игры").triggered.connect(self.save_audio_requested)
         self._menu.addSeparator()
         self._menu.addAction("Выход").triggered.connect(self.quit_requested)
 

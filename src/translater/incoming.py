@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 _MAX_QUEUE = 3
 _MAX_AGE_S = 8.0
 _LEVEL_LOG_SAMPLES = 10 * SAMPLE_RATE
+RECENT_AUDIO_S = 60
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,9 @@ class IncomingRunner:
         self._on_stats = on_stats
         self._stats = IncomingStats()
         self._queue: deque[tuple[float, np.ndarray]] = deque(maxlen=_MAX_QUEUE)
+        self._recent: deque[np.ndarray] = deque()
+        self._recent_samples = 0
+        self._recent_lock = threading.Lock()
         self._condition = threading.Condition()
         self._running = False
         self._source: AudioSource | None = None
@@ -65,6 +69,9 @@ class IncomingRunner:
         self._worker: threading.Thread | None = None
 
     def start(self) -> None:
+        with self._recent_lock:
+            self._recent.clear()
+            self._recent_samples = 0
         self._stats = IncomingStats()
         self._level_samples = 0
         self._level_energy = 0.0
@@ -97,12 +104,25 @@ class IncomingRunner:
         segmenter = self._segmenter
         if segmenter is None or not len(samples):
             return
+        self._remember(samples)
         phrases = segmenter.feed(samples)
         self._log_level(segmenter, samples)
         if phrases:
             with self._condition:
                 self._queue.extend((time.monotonic(), phrase) for phrase in phrases)  # deque drops the oldest
                 self._condition.notify()
+
+    def recent_audio(self) -> np.ndarray:
+        """Last RECENT_AUDIO_S seconds of the captured stream (16 kHz mono); kept only in memory."""
+        with self._recent_lock:
+            return np.concatenate(self._recent) if self._recent else np.zeros(0, dtype=np.float32)
+
+    def _remember(self, samples: np.ndarray) -> None:
+        with self._recent_lock:
+            self._recent.append(samples)
+            self._recent_samples += len(samples)
+            while self._recent_samples - len(self._recent[0]) >= RECENT_AUDIO_S * SAMPLE_RATE:
+                self._recent_samples -= len(self._recent.popleft())
 
     def _log_level(self, segmenter: SpeechSegmenter, samples: np.ndarray) -> None:
         self._level_samples += len(samples)

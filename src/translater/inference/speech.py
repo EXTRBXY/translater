@@ -41,7 +41,7 @@ class SpeechRecognizer:
             vad_filter=False,
         )
         segments = list(segments)
-        text = " ".join(s.text.strip() for s in segments if s.no_speech_prob < 0.6).strip()
+        text = " ".join(s.text.strip() for s in segments).strip()  # faster-whisper already drops silent segments
         if not is_meaningful(text):
             log.info("Skipped: %d segments, empty or known hallucination after filtering (%s)", len(segments), language)
             return None

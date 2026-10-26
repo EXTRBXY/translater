@@ -18,6 +18,7 @@ from translater.config import (
     HOTKEY_LABELS,
     MAX_RECORD_RANGE_S,
     MONITOR_VOLUME_RANGE,
+    SPEECH_THRESHOLD_RANGE,
     UNLOAD_DELAY_RANGE_S,
     AppConfig,
     HotkeyConfig,
@@ -74,6 +75,8 @@ class SettingsForm(QWidget):
         voice_row = QHBoxLayout()
         voice_row.addWidget(self._voice, 1)
         voice_row.addWidget(preview)
+        self._speech_threshold = _spin_box(SPEECH_THRESHOLD_RANGE, config.speech_threshold, " %")
+        self._speech_threshold.setToolTip("Ниже — субтитры ловят тихую и зашумлённую речь, но чаще срабатывают на шум.")
         self._monitor = _spin_box(MONITOR_VOLUME_RANGE, config.monitor_volume, " %")
         self._monitor.setSpecialValueText("выключено")
         self._status = QLabel()
@@ -91,6 +94,7 @@ class SettingsForm(QWidget):
         form.addRow(f"{HOTKEY_LABELS['outgoing_hold']} (удерживать):", self._hold)
         form.addRow(f"{HOTKEY_LABELS['game_ptt']}:", self._ptt)
         form.addRow("Звук для субтитров:", game_row)
+        form.addRow("Порог речи (ниже — чувствительнее):", self._speech_threshold)
         form.addRow("Голос озвучки:", voice_row)
         form.addRow("Озвучка в наушниках:", self._monitor)
         form.addRow("Выгружать модели через:", self._unload_delay)
@@ -122,6 +126,7 @@ class SettingsForm(QWidget):
             game_exe=self._game.currentData() or "",
             tts_voice=self._voice.currentData() or "",
             monitor_volume=self._monitor.value(),
+            speech_threshold=self._speech_threshold.value(),
         )
         errors = validate(candidate)
         if errors:

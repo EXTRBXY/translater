@@ -141,3 +141,15 @@ def test_inference_process_relays_handler_errors() -> None:
     with pytest.raises(WorkerError, match="KeyError"):
         process.call("missing", None)
     process.stop()
+
+
+def test_recent_audio_keeps_last_minute_only() -> None:
+    from translater.incoming import RECENT_AUDIO_S
+
+    runner = _runner(lambda phrase: None, [], [], FakeSource(np.zeros(0, dtype=np.float32)))
+    runner.start()
+    chunk = np.zeros(16000, dtype=np.float32)
+    for _ in range(RECENT_AUDIO_S + 15):
+        runner._on_audio(chunk)
+    runner.stop()
+    assert RECENT_AUDIO_S * 16000 <= len(runner.recent_audio()) <= (RECENT_AUDIO_S + 1) * 16000

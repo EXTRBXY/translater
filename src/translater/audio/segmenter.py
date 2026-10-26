@@ -20,6 +20,10 @@ class SegmenterSettings:
     padding_ms: int = 200
     max_phrase_s: float = 12.0
 
+    @classmethod
+    def from_threshold(cls, threshold: float) -> SegmenterSettings:
+        return cls(threshold=threshold, release_threshold=max(0.05, threshold - 0.15))
+
 
 def _windows(ms: float) -> int:
     return max(1, round(ms * SAMPLE_RATE / 1000 / WINDOW))

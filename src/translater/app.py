@@ -7,6 +7,7 @@ import shutil
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from functools import partial
 from logging.handlers import RotatingFileHandler
 from types import TracebackType
@@ -15,10 +16,12 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
+from translater.audio import SAMPLE_RATE
 from translater.audio.capture import GameAudioSource, MicrophoneSource
 from translater.audio.playback import DevicePlayer
-from translater.audio.segmenter import SpeechSegmenter
+from translater.audio.segmenter import SegmenterSettings, SpeechSegmenter
 from translater.audio.vad import SileroVad
+from translater.audio.wav import save_wav
 from translater.components import (
     CUDA,
     MT_EN_RU,
@@ -40,7 +43,7 @@ from translater.tts import PREVIEW_TEXT, WindowsSpeech, english_voices
 from translater.ui.hold_key import HoldKeyWatcher
 from translater.ui.main_window import MainWindow
 from translater.ui.overlay import SubtitleOverlay
-from translater.ui.theme import COLOR_RECORDING, MODE_LABELS, STATE_COLORS, STATE_LABELS
+from translater.ui.theme import COLOR_ACTIVE, COLOR_RECORDING, MODE_LABELS, STATE_COLORS, STATE_LABELS
 from translater.ui.toast import StatusToast
 from translater.ui.tray import TrayIcon
 from translater.win32.hotkeys import GlobalHotkeys
@@ -161,7 +164,9 @@ class _Application:
         self._models = ModelManager(specs, self._executor, config.unload_delay_s)
         self._incoming = IncomingRunner(
             source_factory=lambda: GameAudioSource(self._config.game_exe, self._game_pid()),
-            segmenter_factory=lambda: SpeechSegmenter(SileroVad()),
+            segmenter_factory=lambda: SpeechSegmenter(
+                SileroVad(), SegmenterSettings.from_threshold(self._config.speech_threshold / 100)
+            ),
             executor=self._executor,
             process_phrase=lambda phrase: self._inference.call("incoming", phrase),
             on_subtitle=self._bridge.subtitle.emit,
@@ -221,6 +226,7 @@ class _Application:
         self._window.voice_preview_requested.connect(self._preview_voice)
         self._tray.toggle_requested.connect(self._toggle)
         self._tray.open_requested.connect(self._window.bring_to_front)
+        self._tray.save_audio_requested.connect(self._save_recent_audio)
         self._tray.quit_requested.connect(self._quit)
         self._hold.pressed.connect(lambda: self._set_recording(True))
         self._hold.released.connect(lambda: self._set_recording(False))
@@ -453,6 +459,21 @@ class _Application:
             self._outgoing.end_recording()
         self._tray.set_recording(recording)
         self._window.set_recording(recording)
+
+    def _save_recent_audio(self) -> None:
+        samples = self._incoming.recent_audio()
+        if not len(samples):
+            self._tray.show_message("Нет записанного звука: сначала включите входящий перевод.", error=True)
+            return
+        path = log_dir() / f"game-audio-{datetime.now():%Y%m%d-%H%M%S}.wav"
+        try:
+            save_wav(path, samples)
+        except OSError as exc:
+            log.exception("Cannot save diagnostic audio")
+            self._tray.show_message(f"Не удалось сохранить звук: {exc}", error=True)
+            return
+        log.info("Diagnostic audio saved: %s, %.0f s", path.name, len(samples) / SAMPLE_RATE)
+        self._toast.show_message(f"Сохранено {len(samples) / SAMPLE_RATE:.0f} с звука: {path.name}", COLOR_ACTIVE)
 
     def _on_hidden_to_tray(self) -> None:
         if not self._tray_hint_shown:

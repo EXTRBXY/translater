@@ -29,6 +29,7 @@ MAX_VOICE_NAME = 200
 _GAME_PTT_CANDIDATES = (0x05, 0x06, 0x04, 0x76)
 MAX_RECORD_RANGE_S = (1, 60)
 MONITOR_VOLUME_RANGE = (0, 100)
+SPEECH_THRESHOLD_RANGE = (10, 90)
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class AppConfig:
     game_exe: str = ""
     tts_voice: str = ""
     monitor_volume: int = 40
+    speech_threshold: int = 35
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -80,6 +82,7 @@ class AppConfig:
             "game_exe": self.game_exe,
             "tts_voice": self.tts_voice,
             "monitor_volume": self.monitor_volume,
+            "speech_threshold": self.speech_threshold,
         }
 
 
@@ -126,6 +129,8 @@ def validate(config: AppConfig) -> list[str]:
         errors.append("Максимальная длина записи вне допустимого диапазона.")
     if not _is_exe_name(config.game_exe):
         errors.append("Имя процесса игры должно быть именем .exe-файла.")
+    if not _in_range(config.speech_threshold, SPEECH_THRESHOLD_RANGE):
+        errors.append("Порог распознавания речи вне допустимого диапазона.")
     if not _in_range(config.monitor_volume, MONITOR_VOLUME_RANGE):
         errors.append("Громкость озвучки в наушниках вне допустимого диапазона.")
     if not _is_voice_name(config.tts_voice):
@@ -162,6 +167,7 @@ def load_config(path: Path) -> AppConfig:
         game_exe=raw["game_exe"] if _is_exe_name(raw.get("game_exe")) else defaults.game_exe,
         tts_voice=raw["tts_voice"] if _is_voice_name(raw.get("tts_voice")) else defaults.tts_voice,
         monitor_volume=_int_or(raw.get("monitor_volume"), MONITOR_VOLUME_RANGE, defaults.monitor_volume),
+        speech_threshold=_int_or(raw.get("speech_threshold"), SPEECH_THRESHOLD_RANGE, defaults.speech_threshold),
     )
     if validate(config):
         config = _resolve_conflicts(config, defaults)

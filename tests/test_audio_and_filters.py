@@ -69,3 +69,28 @@ def test_collapse_repeats() -> None:
 def test_decoding_limit_follows_source_length() -> None:
     assert decoding_limit(5) == 20
     assert decoding_limit(500) == 256
+
+
+def test_segmenter_settings_from_threshold() -> None:
+    settings = SegmenterSettings.from_threshold(0.35)
+    assert settings.threshold == 0.35
+    assert abs(settings.release_threshold - 0.2) < 1e-9
+    assert SegmenterSettings.from_threshold(0.1).release_threshold == 0.05
+
+
+def test_lower_threshold_catches_weak_speech() -> None:
+    audio, _ = _stream([(0.0, 10), (0.4, 30), (0.0, 20)])
+    assert _segmenter().feed(audio) == []
+    segmenter = SpeechSegmenter(lambda w: float(w[0]), SegmenterSettings.from_threshold(0.35))
+    assert len(segmenter.feed(audio)) == 1
+
+
+def test_save_wav_roundtrip(tmp_path) -> None:
+    import wave
+
+    from translater.audio.wav import save_wav
+
+    path = tmp_path / "a.wav"
+    save_wav(path, np.linspace(-2, 2, 16000, dtype=np.float32))
+    with wave.open(str(path)) as file:
+        assert (file.getframerate(), file.getnchannels(), file.getnframes()) == (16000, 1, 16000)
