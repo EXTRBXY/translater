@@ -33,6 +33,18 @@ SPEECH_THRESHOLD_RANGE = (10, 90)
 
 
 @dataclass(frozen=True)
+class RecognitionMode:
+    label: str
+    beam_size: int
+
+
+RECOGNITION_MODES: dict[str, RecognitionMode] = {
+    "speed": RecognitionMode("Скорость", 2),
+    "quality": RecognitionMode("Качество", 5),
+}
+
+
+@dataclass(frozen=True)
 class Hotkey:
     vk: int
     modifiers: int = 0
@@ -73,6 +85,11 @@ class AppConfig:
     tts_voice: str = ""
     monitor_volume: int = 40
     speech_threshold: int = 35
+    recognition: str = "speed"
+
+    @property
+    def beam_size(self) -> int:
+        return RECOGNITION_MODES[self.recognition].beam_size
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -83,6 +100,7 @@ class AppConfig:
             "tts_voice": self.tts_voice,
             "monitor_volume": self.monitor_volume,
             "speech_threshold": self.speech_threshold,
+            "recognition": self.recognition,
         }
 
 
@@ -135,6 +153,8 @@ def validate(config: AppConfig) -> list[str]:
         errors.append("Громкость озвучки в наушниках вне допустимого диапазона.")
     if not _is_voice_name(config.tts_voice):
         errors.append("Недопустимое имя голоса озвучки.")
+    if config.recognition not in RECOGNITION_MODES:
+        errors.append("Неизвестный режим распознавания.")
     return errors
 
 
@@ -168,6 +188,7 @@ def load_config(path: Path) -> AppConfig:
         tts_voice=raw["tts_voice"] if _is_voice_name(raw.get("tts_voice")) else defaults.tts_voice,
         monitor_volume=_int_or(raw.get("monitor_volume"), MONITOR_VOLUME_RANGE, defaults.monitor_volume),
         speech_threshold=_int_or(raw.get("speech_threshold"), SPEECH_THRESHOLD_RANGE, defaults.speech_threshold),
+        recognition=raw["recognition"] if raw.get("recognition") in RECOGNITION_MODES else defaults.recognition,
     )
     if validate(config):
         config = _resolve_conflicts(config, defaults)

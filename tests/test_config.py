@@ -108,3 +108,17 @@ def test_tts_voice_roundtrip_and_validation(tmp_path) -> None:
 def test_speech_threshold_validation() -> None:
     assert validate(AppConfig(speech_threshold=35)) == []
     assert validate(AppConfig(speech_threshold=5))
+
+
+def test_recognition_mode_roundtrip_and_fallback(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(recognition="quality"))
+    assert load_config(path).recognition == "quality"
+    assert AppConfig(recognition="quality").beam_size == 5
+    assert AppConfig().beam_size == 2
+
+    data = AppConfig().to_json()
+    data["recognition"] = "turbo"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load_config(path).recognition == AppConfig().recognition
+    assert validate(AppConfig(recognition="turbo"))

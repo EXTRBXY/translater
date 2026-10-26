@@ -42,6 +42,8 @@ src/translater/ui/             главное окно, трей, форма н�
 - Остановка режима (`runner.stop`) — вне блокировки контроллера: runner ждёт executor, колбэки которого берут блокировку.
 - Колбэки контроллера приходят из рабочих потоков; в UI — только через сигналы `_Bridge`.
 - Ядро (`config`, `models`, `controller`) не импортирует Qt и Win32 — тесты идут на любой ОС.
+- `SpeechRecognizer` кодирует фразу один раз и вызывает `WhisperModel.generate_segments` (не публичный `transcribe`):
+  при обновлении faster-whisper сверить его код; `tests/test_speech_model.py` в CI сравнивает с `transcribe` на whisper-tiny.
 - Новая модель — `ModelSpec` в `MODEL_SPECS` и имя в `MODE_REQUIREMENTS`; новый режим работы — `ModeRunner`.
 
 ## Команды
@@ -50,6 +52,7 @@ src/translater/ui/             главное окно, трей, форма н�
 python -m pytest
 python -m translater.doctor
 python -m translater
+.\build.bat              # git pull + tools\build.ps1: тесты, exe, самопроверка
 ```
 
 Версия — только `version` в `pyproject.toml`; тег `v<версия>` создаёт workflow, вручную теги не отправлять.

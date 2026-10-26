@@ -11,7 +11,9 @@ from datetime import datetime
 from functools import partial
 from logging.handlers import RotatingFileHandler
 from types import TracebackType
+from typing import Any
 
+import numpy as np
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
@@ -168,7 +170,7 @@ class _Application:
                 SileroVad(), SegmenterSettings.from_threshold(self._config.speech_threshold / 100)
             ),
             executor=self._executor,
-            process_phrase=lambda phrase: self._inference.call("incoming", phrase),
+            process_phrase=partial(self._recognize, "incoming"),
             on_subtitle=self._bridge.subtitle.emit,
             on_source=lambda text: self._bridge.source.emit(Mode.INCOMING, f"Источник: {text}"),
             on_failure=lambda exc: self._bridge.mode_failure.emit(Mode.INCOMING, str(exc)),
@@ -180,7 +182,7 @@ class _Application:
             voice_player_factory=lambda: DevicePlayer(_VIRTUAL_CABLE),
             cue_player_factory=DevicePlayer,
             executor=self._executor,
-            process_clip=lambda clip: self._inference.call("outgoing", clip),
+            process_clip=partial(self._recognize, "outgoing"),
             max_record_s=lambda: self._config.max_record_s,
             monitor_volume=lambda: self._config.monitor_volume,
             on_result=self._bridge.utterance.emit,
@@ -255,6 +257,9 @@ class _Application:
 
     def _game_pid(self) -> int | None:
         return find_pid(self._config.game_exe) if self._config.game_exe else None
+
+    def _recognize(self, kind: str, audio: np.ndarray) -> Any:
+        return self._inference.call(kind, worker.SpeechRequest(audio, self._config.beam_size))
 
     def _toggle(self, mode: Mode) -> None:
         if self._controller.state(mode) is not ModeState.IDLE:

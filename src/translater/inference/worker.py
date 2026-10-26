@@ -32,6 +32,12 @@ class WorkerSettings:
 
 
 @dataclass(frozen=True)
+class SpeechRequest:
+    audio: np.ndarray
+    beam_size: int
+
+
+@dataclass(frozen=True)
 class IncomingResult:
     language: str
     text: str
@@ -98,15 +104,15 @@ class _Service:
         gc.collect()
         log.info("Unloaded %s", name)
 
-    def _incoming(self, audio: np.ndarray) -> IncomingResult | None:
-        recognition = self._models[WHISPER].recognize(audio, ("en", "ru"))
+    def _incoming(self, request: SpeechRequest) -> IncomingResult | None:
+        recognition = self._models[WHISPER].recognize(request.audio, ("en", "ru"), request.beam_size)
         if recognition is None:
             return None
         translation = self._models[MT_EN_RU].translate(recognition.text) if recognition.language == "en" else None
         return IncomingResult(recognition.language, recognition.text, translation)
 
-    def _outgoing(self, audio: np.ndarray) -> OutgoingResult | None:
-        recognition = self._models[WHISPER].recognize(audio, ("ru",))
+    def _outgoing(self, request: SpeechRequest) -> OutgoingResult | None:
+        recognition = self._models[WHISPER].recognize(request.audio, ("ru",), request.beam_size)
         if recognition is None:
             return None
         return OutgoingResult(recognition.text, self._models[MT_RU_EN].translate(recognition.text))
