@@ -1,7 +1,12 @@
 # CLAUDE.md
 
-Translater — локальный переводчик голосового чата для игр, только Windows. Python 3.14 (поддерживается 3.12–3.14), PySide6. Описание и этапы —
-[README.md](README.md). Язык UI и документации — русский, идентификаторы — английские.
+Translater — локальный переводчик голосового чата для игр, только Windows. Python 3.14 (поддерживается 3.12–3.14), PySide6.
+Язык UI и документации — русский, идентификаторы — английские.
+
+Документация: [README.md](README.md) — только для пользователя; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — потоки,
+модули, конвейеры, решения; [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — сборка, тесты, релиз, порядок частых изменений;
+[docs/CHANGELOG.md](docs/CHANGELOG.md). Меняя поведение, обновляйте соответствующий документ: настройки — таблицу в
+README, релиз — CHANGELOG.
 
 ## Правила
 
@@ -27,9 +32,13 @@ src/translater/outgoing.py     OutgoingRunner: запись по клавише 
 src/translater/tts.py          SAPI (pywin32): английский голос Windows в PCM; только на потоке, где создан
 src/translater/audio/playback.py  DevicePlayer: вывод на устройство WASAPI в его формате, прерываемый
 src/translater/selftest.py     Translater.exe --self-test <отчёт>: проверка упаковки в CI
+src/translater/doctor.py       python -m translater.doctor: отчёт об окружении
 src/translater/win32/          ctypes: RegisterHotKey, GetAsyncKeyState, приоритет, мьютекс
 src/translater/ui/             главное окно, трей, форма настроек, захват клавиш, слежение за клавишей записи
-.github/workflows/release.yml  push в main -> тесты; новая версия -> PyInstaller, тег и архив в Releases
+.github/workflows/release.yml  push в main -> тесты (с whisper-tiny); новая версия -> PyInstaller, тег и архив в Releases
+.github/workflows/manifest.yml  вручную: коммит и SHA-256 файлов Hugging Face (tools/hf_manifest.py)
+tools/build.ps1, build.bat     локальная сборка (тот же скрипт, что в CI)
+docs/                          архитектура, разработка, история версий
 ```
 
 ## Инварианты
@@ -44,7 +53,8 @@ src/translater/ui/             главное окно, трей, форма н�
 - Ядро (`config`, `models`, `controller`) не импортирует Qt и Win32 — тесты идут на любой ОС.
 - `SpeechRecognizer` кодирует фразу один раз и вызывает `WhisperModel.generate_segments` (не публичный `transcribe`):
   при обновлении faster-whisper сверить его код; `tests/test_speech_model.py` в CI сравнивает с `transcribe` на whisper-tiny.
-- Новая модель — `ModelSpec` в `MODEL_SPECS` и имя в `MODE_REQUIREMENTS`; новый режим работы — `ModeRunner`.
+- Новая модель — компонент в `components.py`, обработчик в `worker.py`, связь в `_MODEL_COMPONENTS`, `MODE_COMPONENTS`,
+  `MODE_MODELS` (`app.py`); новый режим работы — `ModeRunner`. Подробно — docs/DEVELOPMENT.md, «Частые изменения».
 
 ## Команды
 
@@ -55,4 +65,5 @@ python -m translater
 .\build.bat              # git pull + tools\build.ps1: тесты, exe, самопроверка
 ```
 
-Версия — только `version` в `pyproject.toml`; тег `v<версия>` создаёт workflow, вручную теги не отправлять.
+Версия — только `version` в `pyproject.toml` плюс запись в `docs/CHANGELOG.md`; тег `v<версия>` создаёт workflow, вручную
+теги не отправлять.
