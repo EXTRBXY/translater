@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from translater.config import (
+    CHAT_OPACITY_RANGE,
     HOTKEY_LABELS,
     MAX_RECORD_RANGE_S,
     MONITOR_VOLUME_RANGE,
@@ -56,6 +58,7 @@ class SettingsForm(QWidget):
         self._outgoing = KeyCaptureEdit(hotkeys.outgoing_toggle, allow_modifiers=True, allow_mouse=False)
         self._hold = KeyCaptureEdit(hotkeys.outgoing_hold, allow_modifiers=False, allow_mouse=True)
         self._ptt = KeyCaptureEdit(hotkeys.game_ptt, allow_modifiers=False, allow_mouse=True)
+        self._save_audio = KeyCaptureEdit(hotkeys.save_audio, allow_modifiers=True, allow_mouse=False)
         self._unload_delay = _spin_box(UNLOAD_DELAY_RANGE_S, config.unload_delay_s)
         self._max_record = _spin_box(MAX_RECORD_RANGE_S, config.max_record_s)
         self._game = QComboBox()
@@ -87,12 +90,22 @@ class SettingsForm(QWidget):
         )
         self._monitor = _spin_box(MONITOR_VOLUME_RANGE, config.monitor_volume, " %")
         self._monitor.setSpecialValueText("выключено")
+        self._subtitles = QCheckBox("Субтитры поверх игры")
+        self._subtitles.setChecked(config.subtitles_overlay)
+        self._chat = QCheckBox("Окно чата с историей фраз")
+        self._chat.setChecked(config.chat_window)
+        self._chat_on_top = QCheckBox("поверх всех окон")
+        self._chat_on_top.setChecked(config.chat_on_top)
+        self._chat_opacity = _spin_box(CHAT_OPACITY_RANGE, config.chat_opacity, " %")
+        self._chat_opacity.setPrefix("непрозрачность ")
+        display_row = _row(self._subtitles, self._chat)
+        chat_row = _row(self._chat_on_top, self._chat_opacity)
         self._status = QLabel()
         self._status.setWordWrap(True)
         save = QPushButton("Сохранить")
         save.clicked.connect(self._save)
 
-        for edit in (self._incoming, self._outgoing, self._hold, self._ptt):
+        for edit in (self._incoming, self._outgoing, self._hold, self._ptt, self._save_audio):
             edit.capturing_changed.connect(self.capturing_changed)
             edit.hotkey_changed.connect(lambda: self._status.clear())
 
@@ -101,7 +114,10 @@ class SettingsForm(QWidget):
         form.addRow(f"{HOTKEY_LABELS['outgoing_toggle']}, вкл/выкл:", self._outgoing)
         form.addRow(f"{HOTKEY_LABELS['outgoing_hold']} (удерживать):", self._hold)
         form.addRow(f"{HOTKEY_LABELS['game_ptt']}:", self._ptt)
+        form.addRow(f"{HOTKEY_LABELS['save_audio']}:", self._save_audio)
         form.addRow("Звук для субтитров:", game_row)
+        form.addRow("Показывать перевод:", display_row)
+        form.addRow("Окно чата:", chat_row)
         form.addRow("Порог речи (ниже — чувствительнее):", self._speech_threshold)
         form.addRow("Распознавание речи:", self._recognition)
         form.addRow("Голос озвучки:", voice_row)
@@ -129,6 +145,7 @@ class SettingsForm(QWidget):
                 outgoing_toggle=self._outgoing.hotkey,
                 outgoing_hold=self._hold.hotkey,
                 game_ptt=self._ptt.hotkey,
+                save_audio=self._save_audio.hotkey,
             ),
             unload_delay_s=self._unload_delay.value(),
             max_record_s=self._max_record.value(),
@@ -137,6 +154,10 @@ class SettingsForm(QWidget):
             monitor_volume=self._monitor.value(),
             speech_threshold=self._speech_threshold.value(),
             recognition=self._recognition.currentData(),
+            subtitles_overlay=self._subtitles.isChecked(),
+            chat_window=self._chat.isChecked(),
+            chat_on_top=self._chat_on_top.isChecked(),
+            chat_opacity=self._chat_opacity.value(),
         )
         errors = validate(candidate)
         if errors:
@@ -158,6 +179,14 @@ class SettingsForm(QWidget):
     def show_status(self, text: str, error: bool = False) -> None:
         self._status.setStyleSheet(f"color: {COLOR_RECORDING if error else COLOR_ACTIVE};")
         self._status.setText(text)
+
+
+def _row(*widgets: QWidget) -> QHBoxLayout:
+    row = QHBoxLayout()
+    for widget in widgets:
+        row.addWidget(widget)
+    row.addStretch(1)
+    return row
 
 
 def _spin_box(bounds: tuple[int, int], value: int, suffix: str = " с") -> QSpinBox:

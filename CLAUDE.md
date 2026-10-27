@@ -34,7 +34,7 @@ src/translater/audio/playback.py  DevicePlayer: вывод на устройст
 src/translater/selftest.py     Translater.exe --self-test <отчёт>: проверка упаковки в CI
 src/translater/doctor.py       python -m translater.doctor: отчёт об окружении
 src/translater/win32/          ctypes: RegisterHotKey, GetAsyncKeyState, приоритет, мьютекс
-src/translater/ui/             главное окно, трей, форма настроек, захват клавиш, слежение за клавишей записи
+src/translater/ui/             главное окно, трей, форма настроек, захват клавиш, оверлей, окно чата, уведомление
 .github/workflows/release.yml  push в main -> тесты (с whisper-tiny); новая версия -> PyInstaller, тег и архив в Releases
 .github/workflows/manifest.yml  вручную: коммит и SHA-256 файлов Hugging Face (tools/hf_manifest.py)
 tools/build.ps1, build.bat     локальная сборка (тот же скрипт, что в CI)

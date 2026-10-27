@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -26,10 +27,10 @@ MODIFIER_VKS = frozenset({0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 
 UNLOAD_DELAY_RANGE_S = (0, 600)
 MAX_EXE_NAME = 260
 MAX_VOICE_NAME = 200
-_GAME_PTT_CANDIDATES = (0x05, 0x06, 0x04, 0x76)
 MAX_RECORD_RANGE_S = (1, 60)
 MONITOR_VOLUME_RANGE = (0, 100)
 SPEECH_THRESHOLD_RANGE = (10, 90)
+CHAT_OPACITY_RANGE = (30, 100)
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,18 @@ class HotkeyConfig:
     outgoing_toggle: Hotkey = Hotkey(0x79, MOD_CONTROL | MOD_ALT)
     outgoing_hold: Hotkey = Hotkey(0x77)
     game_ptt: Hotkey = Hotkey(0x05)
+    save_audio: Hotkey = Hotkey(0x7A, MOD_CONTROL | MOD_ALT)
+
+
+GLOBAL_HOTKEYS = ("incoming_toggle", "outgoing_toggle", "save_audio")
+_HELD_KEYS = ("outgoing_hold", "game_ptt")
+# Hotkeys added in later versions: tried in order when the user's file conflicts with the new default.
+_NEW_HOTKEY_CANDIDATES: dict[str, tuple[Hotkey, ...]] = {
+    "game_ptt": (Hotkey(0x05), Hotkey(0x06), Hotkey(0x04), Hotkey(0x76)),
+    "save_audio": tuple(
+        Hotkey(vk, mods) for mods in (MOD_CONTROL | MOD_ALT, MOD_CONTROL | MOD_SHIFT) for vk in (0x7A, 0x7B)
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,10 @@ class AppConfig:
     monitor_volume: int = 40
     speech_threshold: int = 35
     recognition: str = "speed"
+    subtitles_overlay: bool = True
+    chat_window: bool = False
+    chat_on_top: bool = True
+    chat_opacity: int = 90
 
     @property
     def beam_size(self) -> int:
@@ -101,6 +118,10 @@ class AppConfig:
             "monitor_volume": self.monitor_volume,
             "speech_threshold": self.speech_threshold,
             "recognition": self.recognition,
+            "subtitles_overlay": self.subtitles_overlay,
+            "chat_window": self.chat_window,
+            "chat_on_top": self.chat_on_top,
+            "chat_opacity": self.chat_opacity,
         }
 
 
@@ -109,31 +130,33 @@ HOTKEY_LABELS: dict[str, str] = {
     "outgoing_toggle": "Исходящий перевод",
     "outgoing_hold": "Клавиша записи",
     "game_ptt": "Клавиша рации в игре",
+    "save_audio": "Сохранить звук игры",
 }
 
 
 def validate(config: AppConfig) -> list[str]:
     errors: list[str] = []
     hotkeys = config.hotkeys
-    toggles = {"incoming_toggle": hotkeys.incoming_toggle, "outgoing_toggle": hotkeys.outgoing_toggle}
+    combos = {name: getattr(hotkeys, name) for name in GLOBAL_HOTKEYS}
 
-    for name, hotkey in toggles.items():
+    for name, hotkey in combos.items():
         label = HOTKEY_LABELS[name]
         if hotkey.vk in MOUSE_VKS or hotkey.vk in MODIFIER_VKS:
             errors.append(f"{label}: нужна клавиша клавиатуры, не кнопка мыши и не один модификатор.")
         if not hotkey.modifiers:
             errors.append(f"{label}: сочетание должно содержать Ctrl, Alt, Shift или Win.")
-    if hotkeys.incoming_toggle == hotkeys.outgoing_toggle:
-        errors.append("Сочетания входящего и исходящего перевода совпадают.")
+    for (first, a), (second, b) in itertools.combinations(combos.items(), 2):
+        if a == b:
+            errors.append(f"Сочетания «{HOTKEY_LABELS[first]}» и «{HOTKEY_LABELS[second]}» совпадают.")
 
-    held = {"outgoing_hold": hotkeys.outgoing_hold, "game_ptt": hotkeys.game_ptt}
-    for name, key in held.items():
+    for name in _HELD_KEYS:
+        key = getattr(hotkeys, name)
         label = HOTKEY_LABELS[name]
         if key.vk in (VK_LBUTTON, VK_RBUTTON) or key.vk in MODIFIER_VKS:
             errors.append(f"{label}: левая и правая кнопки мыши и модификаторы не допускаются.")
         if key.modifiers:
             errors.append(f"{label}: должна быть одной клавишей без модификаторов.")
-        if key.vk in {t.vk for t in toggles.values()}:
+        if key.vk in {c.vk for c in combos.values()}:
             errors.append(f"{label}: совпадает с клавишей одного из сочетаний.")
     if hotkeys.outgoing_hold.vk == hotkeys.game_ptt.vk:
         errors.append(
@@ -155,6 +178,8 @@ def validate(config: AppConfig) -> list[str]:
         errors.append("Недопустимое имя голоса озвучки.")
     if config.recognition not in RECOGNITION_MODES:
         errors.append("Неизвестный режим распознавания.")
+    if not _in_range(config.chat_opacity, CHAT_OPACITY_RANGE):
+        errors.append("Непрозрачность окна чата вне допустимого диапазона.")
     return errors
 
 
@@ -189,6 +214,10 @@ def load_config(path: Path) -> AppConfig:
         monitor_volume=_int_or(raw.get("monitor_volume"), MONITOR_VOLUME_RANGE, defaults.monitor_volume),
         speech_threshold=_int_or(raw.get("speech_threshold"), SPEECH_THRESHOLD_RANGE, defaults.speech_threshold),
         recognition=raw["recognition"] if raw.get("recognition") in RECOGNITION_MODES else defaults.recognition,
+        subtitles_overlay=_bool_or(raw.get("subtitles_overlay"), defaults.subtitles_overlay),
+        chat_window=_bool_or(raw.get("chat_window"), defaults.chat_window),
+        chat_on_top=_bool_or(raw.get("chat_on_top"), defaults.chat_on_top),
+        chat_opacity=_int_or(raw.get("chat_opacity"), CHAT_OPACITY_RANGE, defaults.chat_opacity),
     )
     if validate(config):
         config = _resolve_conflicts(config, defaults)
@@ -196,9 +225,11 @@ def load_config(path: Path) -> AppConfig:
 
 
 def _resolve_conflicts(config: AppConfig, defaults: AppConfig) -> AppConfig:
-    """A newly added key must not wipe the user's hotkeys: try free buttons for it first."""
-    for vk in _GAME_PTT_CANDIDATES:
-        candidate = replace(config, hotkeys=replace(config.hotkeys, game_ptt=Hotkey(vk)))
+    """A newly added key must not wipe the user's hotkeys: try free alternatives for it first."""
+    names = tuple(_NEW_HOTKEY_CANDIDATES)
+    options = [(getattr(config.hotkeys, name), *_NEW_HOTKEY_CANDIDATES[name]) for name in names]
+    for values in itertools.product(*options):
+        candidate = replace(config, hotkeys=replace(config.hotkeys, **dict(zip(names, values, strict=True))))
         if not validate(candidate):
             return candidate
     log.warning("Config hotkeys conflict, default hotkeys used")
@@ -255,3 +286,7 @@ def _is_voice_name(value: Any) -> bool:
 
 def _int_or(value: Any, bounds: tuple[int, int], default: int) -> int:
     return value if _in_range(value, bounds) else default
+
+
+def _bool_or(value: Any, default: bool) -> bool:
+    return value if isinstance(value, bool) else default

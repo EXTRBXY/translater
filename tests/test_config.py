@@ -122,3 +122,35 @@ def test_recognition_mode_roundtrip_and_fallback(tmp_path) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
     assert load_config(path).recognition == AppConfig().recognition
     assert validate(AppConfig(recognition="turbo"))
+
+
+def test_new_save_audio_hotkey_does_not_reset_user_hotkeys(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    data = AppConfig().to_json()
+    del data["hotkeys"]["save_audio"]
+    data["hotkeys"]["incoming_toggle"] = {"vk": 0x7A, "modifiers": ["ctrl", "alt"]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    hotkeys = load_config(path).hotkeys
+
+    assert hotkeys.incoming_toggle == Hotkey(0x7A, MOD_CONTROL | MOD_ALT)
+    assert hotkeys.save_audio == Hotkey(0x7B, MOD_CONTROL | MOD_ALT)
+
+
+def test_all_global_hotkeys_must_differ() -> None:
+    errors = validate(_config(save_audio=HotkeyConfig().incoming_toggle))
+    assert any("совпадают" in error for error in errors)
+
+
+def test_display_settings_roundtrip_and_fallback(tmp_path) -> None:
+    path = tmp_path / "config.json"
+    config = AppConfig(subtitles_overlay=False, chat_window=True, chat_on_top=False, chat_opacity=50)
+    save_config(path, config)
+    assert load_config(path) == config
+
+    data = config.to_json()
+    data.update(chat_window="yes", chat_opacity=5)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded = load_config(path)
+    assert (loaded.chat_window, loaded.chat_opacity) == (AppConfig().chat_window, AppConfig().chat_opacity)
+    assert validate(AppConfig(chat_opacity=101))

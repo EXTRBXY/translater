@@ -14,7 +14,8 @@ from types import TracebackType
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QSettings, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
@@ -34,7 +35,16 @@ from translater.components import (
     ComponentStore,
     DownloadCancelled,
 )
-from translater.config import HOTKEY_LABELS, AppConfig, config_path, data_dir, load_config, log_dir, save_config
+from translater.config import (
+    GLOBAL_HOTKEYS,
+    HOTKEY_LABELS,
+    AppConfig,
+    config_path,
+    data_dir,
+    load_config,
+    log_dir,
+    save_config,
+)
 from translater.controller import Mode, ModeController, ModeState
 from translater.incoming import IncomingRunner, IncomingStats, Subtitle
 from translater.inference import worker
@@ -42,6 +52,7 @@ from translater.inference.process import InferenceProcess
 from translater.models import ModelManager, ModelSpec
 from translater.outgoing import OutgoingRunner, Utterance
 from translater.tts import PREVIEW_TEXT, WindowsSpeech, english_voices
+from translater.ui.chat import ChatWindow
 from translater.ui.hold_key import HoldKeyWatcher
 from translater.ui.main_window import MainWindow
 from translater.ui.overlay import SubtitleOverlay
@@ -57,7 +68,6 @@ log = logging.getLogger(__name__)
 _MUTEX_NAME = "Local\\Translater.App"
 _ACTIVATION_PIPE = f"Translater.App.{getpass.getuser()}"
 _ACTIVATION_TIMEOUT_MS = 1000
-_HOTKEY_MODES = {"incoming_toggle": Mode.INCOMING, "outgoing_toggle": Mode.OUTGOING}
 _ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 _DISK_RESERVE_FACTOR = 2.2  # archive plus extracted files
 _VIRTUAL_CABLE = "CABLE Input"
@@ -200,6 +210,13 @@ class _Application:
         self._preview_player: DevicePlayer | None = None
         self._tray = TrayIcon()
         self._toast = StatusToast()
+        self._chat = ChatWindow(QSettings(str(data_dir() / "window.ini"), QSettings.Format.IniFormat))
+        self._chat.apply_settings(config.chat_on_top, config.chat_opacity)
+        self._hotkey_actions = {
+            "incoming_toggle": partial(self._toggle, Mode.INCOMING),
+            "outgoing_toggle": partial(self._toggle, Mode.OUTGOING),
+            "save_audio": self._save_recent_audio,
+        }
         self._hold = HoldKeyWatcher()
         self._ptt = HoldKeyWatcher()
         self._hotkeys = GlobalHotkeys(self._bridge.hotkey.emit)
@@ -209,7 +226,7 @@ class _Application:
             log.warning("Activation server not started: %s", self._activation.errorString())
         self._activation.newConnection.connect(self._on_activation)
 
-        self._bridge.hotkey.connect(lambda name: self._toggle(_HOTKEY_MODES[name]))
+        self._bridge.hotkey.connect(lambda name: self._hotkey_actions[name]())
         self._bridge.mode_state.connect(self._on_mode_state)
         self._bridge.mode_error.connect(self._on_mode_error)
         self._bridge.mode_failure.connect(self._on_mode_failure)
@@ -226,9 +243,12 @@ class _Application:
         self._window.hidden_to_tray.connect(self._on_hidden_to_tray)
         self._window.download_cancel_requested.connect(self._cancel_download)
         self._window.voice_preview_requested.connect(self._preview_voice)
+        self._window.save_audio_requested.connect(self._save_recent_audio)
+        self._window.open_recordings_requested.connect(self._open_recordings)
         self._tray.toggle_requested.connect(self._toggle)
         self._tray.open_requested.connect(self._window.bring_to_front)
         self._tray.save_audio_requested.connect(self._save_recent_audio)
+        self._tray.chat_requested.connect(self._chat.show)
         self._tray.quit_requested.connect(self._quit)
         self._hold.pressed.connect(lambda: self._set_recording(True))
         self._hold.released.connect(lambda: self._set_recording(False))
@@ -246,6 +266,7 @@ class _Application:
         if self._preview_player is not None:
             self._preview_player.close()
         self._hotkeys.close()
+        self._chat.save_geometry()
         self._controller.shutdown()
         self._models.close()
         self._executor.shutdown(wait=False, cancel_futures=True)
@@ -335,7 +356,7 @@ class _Application:
 
     def _apply_hotkeys(self) -> None:
         hotkeys = self._config.hotkeys
-        failed = self._hotkeys.set_bindings({name: getattr(hotkeys, name) for name in _HOTKEY_MODES})
+        failed = self._hotkeys.set_bindings({name: getattr(hotkeys, name) for name in GLOBAL_HOTKEYS})
         self._tray.set_hotkey_hints(self._config)
         self._window.apply_config(self._config)
         if not failed:
@@ -365,6 +386,11 @@ class _Application:
         source_changed = (new_config.game_exe, new_config.tts_voice) != (self._config.game_exe, self._config.tts_voice)
         self._config = new_config
         self._models.unload_delay_s = new_config.unload_delay_s
+        self._chat.apply_settings(new_config.chat_on_top, new_config.chat_opacity)
+        if not new_config.chat_window:
+            self._chat.hide()
+        elif self._any_active():
+            self._chat.show()
         if self._controller.state(Mode.OUTGOING) is ModeState.ACTIVE:
             self._start_outgoing_keys()
         restart_hint = source_changed and any(self._controller.state(m) is not ModeState.IDLE for m in Mode)
@@ -385,13 +411,18 @@ class _Application:
             else:
                 self._hold.stop()
                 self._ptt.stop()
-        active = any(self._controller.state(m) is ModeState.ACTIVE for m in Mode)
+        active = self._any_active()
+        if active and self._config.chat_window and state is ModeState.ACTIVE:
+            self._chat.show()
         if active and self._overlay is None:
             self._overlay = SubtitleOverlay()
         elif not active and self._overlay is not None:
             self._overlay.close()
             self._overlay.deleteLater()
             self._overlay = None
+
+    def _any_active(self) -> bool:
+        return any(self._controller.state(m) is ModeState.ACTIVE for m in Mode)
 
     def _start_outgoing_keys(self) -> None:
         self._hold.start(self._config.hotkeys.outgoing_hold.vk)
@@ -420,7 +451,8 @@ class _Application:
             )
 
     def _on_subtitle(self, subtitle: Subtitle) -> None:
-        if self._overlay is not None:
+        self._chat.add_message(subtitle.text, subtitle.original)
+        if self._overlay is not None and self._config.subtitles_overlay:
             self._overlay.add_line(subtitle.text, subtitle.original)
 
     def _preview_voice(self, voice_name: str) -> None:
@@ -449,13 +481,13 @@ class _Application:
             self._window.show_settings_status(f"Не удалось воспроизвести голос: {exc}", error=True)
 
     def _on_utterance(self, utterance: Utterance | None) -> None:
-        if self._overlay is None:
-            return
         if utterance is None:
-            self._overlay.add_line("Речь не распознана, повторите")
+            self._toast.show_message("Речь не распознана, повторите", COLOR_RECORDING)
             return
         QApplication.clipboard().setText(utterance.translation)
-        self._overlay.add_line(f"Вы: {utterance.translation}", utterance.text)
+        self._chat.add_message(utterance.translation, utterance.text, author="Вы", own=True)
+        if self._overlay is not None and self._config.subtitles_overlay:
+            self._overlay.add_line(f"Вы: {utterance.translation}", utterance.text)
 
     def _set_recording(self, recording: bool) -> None:
         if recording:
@@ -468,17 +500,27 @@ class _Application:
     def _save_recent_audio(self) -> None:
         samples = self._incoming.recent_audio()
         if not len(samples):
-            self._tray.show_message("Нет записанного звука: сначала включите входящий перевод.", error=True)
+            self._notify_recording("Звук не сохранён: сначала включите входящий перевод.", error=True)
             return
         path = log_dir() / f"game-audio-{datetime.now():%Y%m%d-%H%M%S}.wav"
         try:
             save_wav(path, samples)
         except OSError as exc:
             log.exception("Cannot save diagnostic audio")
-            self._tray.show_message(f"Не удалось сохранить звук: {exc}", error=True)
+            self._notify_recording(f"Не удалось сохранить звук: {exc}", error=True)
             return
         log.info("Diagnostic audio saved: %s, %.0f s", path.name, len(samples) / SAMPLE_RATE)
-        self._toast.show_message(f"Сохранено {len(samples) / SAMPLE_RATE:.0f} с звука: {path.name}", COLOR_ACTIVE)
+        self._notify_recording(f"Сохранено {len(samples) / SAMPLE_RATE:.0f} с звука игры: {path.name}")
+
+    def _open_recordings(self) -> None:
+        directory = log_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+
+    def _notify_recording(self, text: str, error: bool = False) -> None:
+        """Over a borderless game (toast) and next to the save button, where the tester looks after the match."""
+        self._toast.show_message(text, COLOR_RECORDING if error else COLOR_ACTIVE)
+        self._window.show_recordings_status(text, error=error)
 
     def _on_hidden_to_tray(self) -> None:
         if not self._tray_hint_shown:

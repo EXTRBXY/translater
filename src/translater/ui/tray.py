@@ -22,6 +22,7 @@ class TrayIcon(QObject):
     toggle_requested = Signal(object)
     open_requested = Signal()
     save_audio_requested = Signal()
+    chat_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -39,7 +40,9 @@ class TrayIcon(QObject):
             action.triggered.connect(lambda _checked, m=mode: self._on_toggle(m))
             self._actions[mode] = action
         self._menu.addSeparator()
-        self._menu.addAction("Сохранить последние 60 с звука игры").triggered.connect(self.save_audio_requested)
+        self._menu.addAction("Окно чата").triggered.connect(self.chat_requested)
+        self._save_audio = self._menu.addAction("Сохранить последние 60 с звука игры")
+        self._save_audio.triggered.connect(self.save_audio_requested)
         self._menu.addSeparator()
         self._menu.addAction("Выход").triggered.connect(self.quit_requested)
 
@@ -53,6 +56,7 @@ class TrayIcon(QObject):
         hints = {Mode.INCOMING: config.hotkeys.incoming_toggle, Mode.OUTGOING: config.hotkeys.outgoing_toggle}
         for mode, action in self._actions.items():
             action.setText(f"{MODE_LABELS[mode]}\t{format_hotkey(hints[mode])}")
+        self._save_audio.setText(f"Сохранить последние 60 с звука игры\t{format_hotkey(config.hotkeys.save_audio)}")
 
     def set_state(self, mode: Mode, state: ModeState) -> None:
         self._states[mode] = state

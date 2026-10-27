@@ -68,8 +68,18 @@ class _ModeCard(QFrame):
         layout.addWidget(self._button, 3, 2)
         layout.addWidget(self._extra, 4, 0, 1, 3)
         layout.setColumnStretch(1, 1)
+        self._layout = layout
         self._extra.hide()
         self.set_state(ModeState.IDLE)
+
+    def add_button_row(self, *buttons: QPushButton, status: QLabel) -> None:
+        row = QHBoxLayout()
+        for button in buttons:
+            row.addWidget(button)
+        row.addStretch(1)
+        self._layout.addLayout(row, 5, 0, 1, 3)
+        status.setWordWrap(True)
+        self._layout.addWidget(status, 6, 0, 1, 3)
 
     def set_hotkey_text(self, text: str) -> None:
         self._hotkey.setText(text)
@@ -117,6 +127,8 @@ class MainWindow(QMainWindow):
     hidden_to_tray = Signal()
     download_cancel_requested = Signal()
     voice_preview_requested = Signal(str)
+    save_audio_requested = Signal()
+    open_recordings_requested = Signal()
 
     def __init__(
         self,
@@ -134,6 +146,13 @@ class MainWindow(QMainWindow):
         self._sources = dict.fromkeys(Mode, "")
         for card in self._cards.values():
             card.toggle_requested.connect(self.toggle_requested)
+        self._save_audio = QPushButton()
+        self._save_audio.setToolTip("Сохраняет в WAV последние 60 с звука, который слушал входящий перевод.")
+        self._save_audio.clicked.connect(self.save_audio_requested)
+        open_recordings = QPushButton("Открыть папку с записями")
+        open_recordings.clicked.connect(self.open_recordings_requested)
+        self._recordings_status = QLabel()
+        self._cards[Mode.INCOMING].add_button_row(self._save_audio, open_recordings, status=self._recordings_status)
 
         self._download = _DownloadPanel()
         self._download.cancel_requested.connect(self.download_cancel_requested)
@@ -169,6 +188,7 @@ class MainWindow(QMainWindow):
             f"Вкл/выкл: {format_hotkey(hotkeys.outgoing_toggle)}    "
             f"Запись: {format_hotkey(hotkeys.outgoing_hold)}    Рация: {format_hotkey(hotkeys.game_ptt)}"
         )
+        self._save_audio.setText(f"Сохранить последние 60 с звука ({format_hotkey(hotkeys.save_audio)})")
 
     def set_state(self, mode: Mode, state: ModeState) -> None:
         self._cards[mode].set_state(state)
@@ -190,6 +210,10 @@ class MainWindow(QMainWindow):
             self._cards[Mode.OUTGOING].set_extra("● Идёт запись", COLOR_RECORDING)
         else:
             self._cards[Mode.OUTGOING].set_extra(self._sources[Mode.OUTGOING], COLOR_IDLE)
+
+    def show_recordings_status(self, text: str, error: bool = False) -> None:
+        self._recordings_status.setStyleSheet(f"color: {COLOR_RECORDING if error else COLOR_ACTIVE};")
+        self._recordings_status.setText(text)
 
     def show_settings_status(self, text: str, error: bool = False) -> None:
         self._settings.show_status(text, error)
